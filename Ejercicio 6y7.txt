@@ -1,0 +1,633 @@
+*&---------------------------------------------------------------------*
+*& Report zfi_report_ap
+*&---------------------------------------------------------------------*
+REPORT zfi_report_ap.
+
+TYPE-POOLS icon.
+
+TYPES:
+  "! Range of company codes (BUKRS)
+  ty_r_bukrs TYPE RANGE OF bukrs,
+  "! Range of customers (KUNNR)
+  ty_r_kunnr TYPE RANGE OF kunnr,
+  "! Range of vendors (LIFNR)
+  ty_r_lifnr TYPE RANGE OF lifnr,
+  "! Range of posting dates (BUDAT)
+  ty_r_budat TYPE RANGE OF budat.
+
+TYPES:
+  "! Partner type (allowed values: 'K' = customer, 'L' = vendor)
+  ty_partner_type TYPE c LENGTH 1,
+  "! Processing status (allowed values: 'G'/'Y'/'O'/'R')
+  ty_status       TYPE c LENGTH 1,
+  "! Aging bucket key (e.g. '0-30', '31-60', '61-90', '>90')
+  ty_bucket       TYPE c LENGTH 10,
+  "! Aging bucket description for display (e.g. '0-30 days')
+  ty_bucket_text  TYPE char20,
+  "! Status description for display (e.g. 'Green', 'Warning')
+  ty_status_text  TYPE char20,
+  "! Message severity (allowed values: 'E' = error, 'W' = warning, 'I' = info)
+  ty_severity     TYPE c LENGTH 1.
+
+CONSTANTS:
+  "! Partner type: customer
+  gc_partner_customer TYPE ty_partner_type VALUE 'K',
+  "! Partner type: vendor
+  gc_partner_vendor   TYPE ty_partner_type VALUE 'L',
+  "! Status: green
+  gc_status_green     TYPE ty_status       VALUE 'G',
+  "! Status: yellow
+  gc_status_yellow    TYPE ty_status       VALUE 'Y',
+  "! Status: orange
+  gc_status_orange    TYPE ty_status       VALUE 'O',
+  "! Status: red
+  gc_status_red       TYPE ty_status       VALUE 'R'.
+
+TYPES:
+  "! Selection parameters for the aging report (AR/AP)
+  BEGIN OF ty_selection,
+    "! Company code (mandatory)
+    bukrs        TYPE bukrs,
+    "! Customer range filter (AR)
+    s_kunnr      TYPE ty_r_kunnr,
+    "! Vendor range filter (AP)
+    s_lifnr      TYPE ty_r_lifnr,
+    "! Posting date range filter
+    s_budat      TYPE ty_r_budat,
+    "! Reporting currency (default set to USD outside TYPES)
+    rep_waers    TYPE waers,
+    "! Exchange rate type (default set to 'M' outside TYPES)
+    ex_rate_type TYPE kurst,
+  END OF ty_selection.
+
+TYPES:
+  "! Common source structure for open items (AR/AP), enriched for reporting
+  BEGIN OF ty_item_src,
+    "! Company code
+    bukrs        TYPE bukrs,
+    "! Partner type: 'K' customer, 'L' vendor
+    partner_type TYPE ty_partner_type,
+    "! Partner identifier (KUNNR/LIFNR normalized)
+    partner_id   TYPE char10,
+    "! Partner name (NAME1)
+    partner_name TYPE name1,
+    "! Accounting document number
+    belnr        TYPE belnr_d,
+    "! Fiscal year
+    gjahr        TYPE gjahr,
+    "! Document date
+    bldat        TYPE bldat,
+    "! Posting date
+    budat        TYPE budat,
+    "! Original document currency
+    waers        TYPE waers,
+    "! Amount in original currency
+    amount_orig  TYPE wrbtr,
+    "! Amount converted to reporting currency
+    amount_rep   TYPE wrbtr,
+    "! Reporting currency
+    rep_waers    TYPE waers,
+    "! Days open since posting date
+    days_open    TYPE i,
+    "! Aging bucket (0-30 / 31-60 / 61-90 / >90)
+    bucket       TYPE ty_bucket,
+    "! Status (G/Y/O/R)
+    status       TYPE ty_status,
+    "! Conversion error indicator
+    conv_error   TYPE abap_bool,
+  END OF ty_item_src.
+
+TYPES:
+  "! ALV output structure (same as source + icon indicator)
+  BEGIN OF ty_out,
+    "! Company code
+    bukrs        TYPE bukrs,
+    "! Partner type: 'K' customer, 'L' vendor
+    partner_type TYPE ty_partner_type,
+    "! Partner identifier (KUNNR/LIFNR normalized)
+    partner_id   TYPE char10,
+    "! Partner name (NAME1)
+    partner_name TYPE name1,
+    "! Accounting document number
+    belnr        TYPE belnr_d,
+    "! Fiscal year
+    gjahr        TYPE gjahr,
+    "! Document date
+    bldat        TYPE bldat,
+    "! Posting date
+    budat        TYPE budat,
+    "! Original document currency
+    waers        TYPE waers,
+    "! Amount in original currency
+    amount_orig  TYPE wrbtr,
+    "! Amount converted to reporting currency
+    amount_rep   TYPE wrbtr,
+    "! Reporting currency
+    rep_waers    TYPE waers,
+    "! Days open since posting date
+    days_open    TYPE i,
+    "! Aging bucket (0-30 / 31-60 / 61-90 / >90)
+    bucket       TYPE ty_bucket,
+    "! Status (G/Y/O/R)
+    status       TYPE ty_status,
+    "! Conversion error indicator
+    conv_error   TYPE abap_bool,
+    "! Traffic-light icon for ALV
+    icon         TYPE icon_d,
+    "! Status text (for ALV display)
+    status_text  TYPE ty_status_text,
+    "! Bucket text (for ALV display)
+    bucket_text  TYPE ty_bucket_text,
+    "! Conversion message (error/warning details)
+    conv_msg     TYPE string,
+  END OF ty_out.
+
+TYPES:
+  "! Message structure for ALV/log usage
+  BEGIN OF ty_msg,
+    "! Severity: 'E' error, 'W' warning, 'I' info
+    severity   TYPE ty_severity,
+    "! Field name related to the message (if applicable)
+    field      TYPE fieldname,
+    "! Message text
+    text       TYPE string,
+    "! Accounting document number
+    belnr      TYPE belnr_d,
+    "! Fiscal year
+    gjahr      TYPE gjahr,
+    "! Partner identifier (KUNNR/LIFNR normalized)
+    partner_id TYPE char10,
+  END OF ty_msg.
+
+TYPES:
+  "! Source items table
+  tt_item_src TYPE STANDARD TABLE OF ty_item_src WITH EMPTY KEY,
+  "! ALV output table
+  tt_out      TYPE STANDARD TABLE OF ty_out      WITH EMPTY KEY,
+  "! Messages table
+  tt_msg      TYPE STANDARD TABLE OF ty_msg      WITH EMPTY KEY.
+
+CLASS lcl_data_access DEFINITION FINAL.
+  PUBLIC SECTION.
+    "! Data access class for FI open items (AR/AP).
+    "! Single responsibility: read data from DB (no business logic).
+    CLASS-METHODS get_open_items
+      IMPORTING
+        "! Selection criteria
+        is_sel   TYPE ty_selection
+      EXPORTING
+        "! Consolidated AR/AP open items
+        et_items TYPE tt_item_src
+      RAISING
+        cx_sy_open_sql_db.
+
+  PRIVATE SECTION.
+    "! Read AR open items from BSID joined with KNA1.
+    CLASS-METHODS get_open_items_ar
+      IMPORTING
+        "! Selection criteria
+        is_sel          TYPE ty_selection
+      RETURNING
+        VALUE(rt_items) TYPE tt_item_src
+      RAISING
+        cx_sy_open_sql_db.
+
+    "! Read AP open items from BSIK joined with LFA1.
+    CLASS-METHODS get_open_items_ap
+      IMPORTING
+        "! Selection criteria
+        is_sel          TYPE ty_selection
+      RETURNING
+        VALUE(rt_items) TYPE tt_item_src
+      RAISING
+        cx_sy_open_sql_db.
+ENDCLASS.
+
+CLASS lcl_data_access IMPLEMENTATION.
+  METHOD get_open_items.
+    DATA(lt_ar) = get_open_items_ar( is_sel ).
+    DATA(lt_ap) = get_open_items_ap( is_sel ).
+
+    et_items = VALUE #( ( LINES OF lt_ar )
+                        ( LINES OF lt_ap ) ).
+  ENDMETHOD.
+
+  METHOD get_open_items_ar.
+    CLEAR rt_items.
+
+    IF is_sel-s_budat IS INITIAL.
+
+      IF is_sel-s_kunnr IS INITIAL.
+        SELECT FROM bsid_view AS oi
+          INNER JOIN kna1 AS bp
+            ON bp~kunnr = oi~kunnr
+          FIELDS
+            oi~bukrs             AS bukrs,
+            @gc_partner_customer AS partner_type,
+            bp~name1             AS partner_name,
+            oi~belnr             AS belnr,
+            oi~gjahr             AS gjahr,
+            oi~bldat             AS bldat,
+            oi~budat             AS budat,
+            oi~waers             AS waers,
+            oi~wrbtr             AS amount_orig,
+            oi~kunnr             AS partner_id
+          WHERE oi~bukrs = @is_sel-bukrs
+          INTO CORRESPONDING FIELDS OF TABLE @rt_items.
+      ELSE.
+        SELECT FROM bsid_view AS oi
+          INNER JOIN kna1 AS bp
+            ON bp~kunnr = oi~kunnr
+          FIELDS
+            oi~bukrs             AS bukrs,
+            @gc_partner_customer AS partner_type,
+            bp~name1             AS partner_name,
+            oi~belnr             AS belnr,
+            oi~gjahr             AS gjahr,
+            oi~bldat             AS bldat,
+            oi~budat             AS budat,
+            oi~waers             AS waers,
+            oi~wrbtr             AS amount_orig,
+            oi~kunnr             AS partner_id
+          WHERE oi~bukrs = @is_sel-bukrs
+            AND oi~kunnr IN @is_sel-s_kunnr
+          INTO CORRESPONDING FIELDS OF TABLE @rt_items.
+      ENDIF.
+
+    ELSE.
+
+      IF is_sel-s_kunnr IS INITIAL.
+        SELECT FROM bsid_view AS oi
+          INNER JOIN kna1 AS bp
+            ON bp~kunnr = oi~kunnr
+          FIELDS
+            oi~bukrs             AS bukrs,
+            @gc_partner_customer AS partner_type,
+            bp~name1             AS partner_name,
+            oi~belnr             AS belnr,
+            oi~gjahr             AS gjahr,
+            oi~bldat             AS bldat,
+            oi~budat             AS budat,
+            oi~waers             AS waers,
+            oi~wrbtr             AS amount_orig,
+            oi~kunnr             AS partner_id
+          WHERE oi~bukrs = @is_sel-bukrs
+            AND oi~budat IN @is_sel-s_budat
+          INTO CORRESPONDING FIELDS OF TABLE @rt_items.
+      ELSE.
+        SELECT FROM bsid_view AS oi
+          INNER JOIN kna1 AS bp
+            ON bp~kunnr = oi~kunnr
+          FIELDS
+            oi~bukrs             AS bukrs,
+            @gc_partner_customer AS partner_type,
+            bp~name1             AS partner_name,
+            oi~belnr             AS belnr,
+            oi~gjahr             AS gjahr,
+            oi~bldat             AS bldat,
+            oi~budat             AS budat,
+            oi~waers             AS waers,
+            oi~wrbtr             AS amount_orig,
+            oi~kunnr             AS partner_id
+          WHERE oi~bukrs = @is_sel-bukrs
+            AND oi~budat IN @is_sel-s_budat
+            AND oi~kunnr IN @is_sel-s_kunnr
+          INTO CORRESPONDING FIELDS OF TABLE @rt_items.
+      ENDIF.
+
+    ENDIF.
+
+    LOOP AT rt_items ASSIGNING FIELD-SYMBOL(<ls_item>).
+      <ls_item>-partner_id = CONV char10( <ls_item>-partner_id ).
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD get_open_items_ap.
+    CLEAR rt_items.
+
+    IF is_sel-s_budat IS INITIAL.
+
+      IF is_sel-s_lifnr IS INITIAL.
+        SELECT FROM bsik_view AS oi
+          INNER JOIN lfa1 AS bp
+            ON bp~lifnr = oi~lifnr
+          FIELDS
+            oi~bukrs           AS bukrs,
+            @gc_partner_vendor AS partner_type,
+            bp~name1           AS partner_name,
+            oi~belnr           AS belnr,
+            oi~gjahr           AS gjahr,
+            oi~bldat           AS bldat,
+            oi~budat           AS budat,
+            oi~waers           AS waers,
+            oi~wrbtr           AS amount_orig,
+            oi~lifnr           AS partner_id
+          WHERE oi~bukrs = @is_sel-bukrs
+          INTO CORRESPONDING FIELDS OF TABLE @rt_items.
+      ELSE.
+        SELECT FROM bsik_view AS oi
+          INNER JOIN lfa1 AS bp
+            ON bp~lifnr = oi~lifnr
+          FIELDS
+            oi~bukrs           AS bukrs,
+            @gc_partner_vendor AS partner_type,
+            bp~name1           AS partner_name,
+            oi~belnr           AS belnr,
+            oi~gjahr           AS gjahr,
+            oi~bldat           AS bldat,
+            oi~budat           AS budat,
+            oi~waers           AS waers,
+            oi~wrbtr           AS amount_orig,
+            oi~lifnr           AS partner_id
+          WHERE oi~bukrs = @is_sel-bukrs
+            AND oi~lifnr IN @is_sel-s_lifnr
+          INTO CORRESPONDING FIELDS OF TABLE @rt_items.
+      ENDIF.
+
+    ELSE.
+
+      IF is_sel-s_lifnr IS INITIAL.
+        SELECT FROM bsik_view AS oi
+          INNER JOIN lfa1 AS bp
+            ON bp~lifnr = oi~lifnr
+          FIELDS
+            oi~bukrs           AS bukrs,
+            @gc_partner_vendor AS partner_type,
+            bp~name1           AS partner_name,
+            oi~belnr           AS belnr,
+            oi~gjahr           AS gjahr,
+            oi~bldat           AS bldat,
+            oi~budat           AS budat,
+            oi~waers           AS waers,
+            oi~wrbtr           AS amount_orig,
+            oi~lifnr           AS partner_id
+          WHERE oi~bukrs = @is_sel-bukrs
+            AND oi~budat IN @is_sel-s_budat
+          INTO CORRESPONDING FIELDS OF TABLE @rt_items.
+      ELSE.
+        SELECT FROM bsik_view AS oi
+          INNER JOIN lfa1 AS bp
+            ON bp~lifnr = oi~lifnr
+          FIELDS
+            oi~bukrs           AS bukrs,
+            @gc_partner_vendor AS partner_type,
+            bp~name1           AS partner_name,
+            oi~belnr           AS belnr,
+            oi~gjahr           AS gjahr,
+            oi~bldat           AS bldat,
+            oi~budat           AS budat,
+            oi~waers           AS waers,
+            oi~wrbtr           AS amount_orig,
+            oi~lifnr           AS partner_id
+          WHERE oi~bukrs = @is_sel-bukrs
+            AND oi~budat IN @is_sel-s_budat
+            AND oi~lifnr IN @is_sel-s_lifnr
+          INTO CORRESPONDING FIELDS OF TABLE @rt_items.
+      ENDIF.
+
+    ENDIF.
+
+    LOOP AT rt_items ASSIGNING FIELD-SYMBOL(<ls_item>).
+      <ls_item>-partner_id = CONV char10( <ls_item>-partner_id ).
+    ENDLOOP.
+  ENDMETHOD.
+ENDCLASS.
+
+TYPES:
+  "! Currency conversion input parameters (no DB access; pure conversion context)
+  BEGIN OF ty_conversion_params,
+    "! Amount to convert (source amount)
+    amount_from   TYPE wrbtr,
+    "! Source currency (must not be initial)
+    currency_from TYPE waers,
+    "! Target currency (must not be initial)
+    currency_to   TYPE waers,
+    "! Conversion date (exchange rate date)
+    conv_date     TYPE budat,
+    "! Exchange rate type (default 'M' if initial)
+    exch_type     TYPE kurst,
+    "! Company code context (optional; not used by the FM directly)
+    company_code  TYPE bukrs,
+  END OF ty_conversion_params.
+
+TYPES:
+  "! Currency conversion result
+  BEGIN OF ty_conversion_result,
+    "! Converted amount in target currency
+    amount_to TYPE wrbtr,
+    "! Status: 'S' success, 'E' error, 'W' warning
+    status    TYPE c LENGTH 1,
+    "! Short, clear message (empty on success)
+    message   TYPE string,
+  END OF ty_conversion_result.
+
+CLASS lcl_currency_converter DEFINITION FINAL.
+  PUBLIC SECTION.
+    "! Currency converter (SRP): converts an amount between currencies using standard API (no DB access).
+    CLASS-METHODS convert_amount
+      IMPORTING
+        "! Conversion parameters
+        is_params        TYPE ty_conversion_params
+      RETURNING
+        VALUE(rs_result) TYPE ty_conversion_result.
+ENDCLASS.
+
+CLASS lcl_currency_converter IMPLEMENTATION.
+  METHOD convert_amount.
+    rs_result = VALUE ty_conversion_result(
+      amount_to = is_params-amount_from
+      status    = 'E'
+      message   = `` ).
+
+    IF is_params-currency_from IS INITIAL OR is_params-currency_to IS INITIAL.
+      rs_result-message = |Missing currency (from/to).|.
+      RETURN.
+    ENDIF.
+
+    IF is_params-currency_from = is_params-currency_to.
+      rs_result-status  = 'S'.
+      rs_result-message = ``.
+      RETURN.
+    ENDIF.
+
+    DATA(lv_exch_type) = COND kurst( WHEN is_params-exch_type IS INITIAL THEN 'M'
+                                    ELSE is_params-exch_type ).
+
+    TRY.
+        DATA(lv_amount_to) = VALUE wrbtr( ).
+
+        CALL FUNCTION 'CONVERT_TO_LOCAL_CURRENCY'
+          EXPORTING
+            date             = is_params-conv_date
+            foreign_amount   = is_params-amount_from
+            foreign_currency = is_params-currency_from
+            local_currency   = is_params-currency_to
+            type_of_rate     = lv_exch_type
+          IMPORTING
+            local_amount     = lv_amount_to
+          EXCEPTIONS
+            no_rate_found    = 1
+            overflow         = 2
+            no_factors_found = 3
+            no_spread_found  = 4
+            derived_2_times  = 5
+            OTHERS           = 6.
+
+        IF sy-subrc = 0.
+          rs_result-amount_to = lv_amount_to.
+          rs_result-status    = 'S'.
+          rs_result-message   = ``.
+          RETURN.
+        ENDIF.
+
+        rs_result-amount_to = is_params-amount_from.
+        rs_result-status    = 'E'.
+        rs_result-message   = |Conversion failed (subrc={ sy-subrc }).|.
+        RETURN.
+
+      CATCH cx_sy_dyn_call_illegal_func INTO DATA(lx_no_fm).
+        rs_result-amount_to = is_params-amount_from.
+        rs_result-status    = 'E'.
+        rs_result-message   = |Conversion FM not available: { lx_no_fm->get_text( ) }|.
+        RETURN.
+
+      CATCH cx_sy_conversion_error INTO DATA(lx_conv).
+        rs_result-amount_to = is_params-amount_from.
+        rs_result-status    = 'E'.
+        rs_result-message   = |Conversion error: { lx_conv->get_text( ) }|.
+        RETURN.
+
+      CATCH cx_sy_arithmetic_error INTO DATA(lx_arith).
+        rs_result-amount_to = is_params-amount_from.
+        rs_result-status    = 'E'.
+        rs_result-message   = |Arithmetic error: { lx_arith->get_text( ) }|.
+        RETURN.
+
+      CATCH cx_root INTO DATA(lx_root).
+        rs_result-amount_to = is_params-amount_from.
+        rs_result-status    = 'E'.
+        rs_result-message   = |Unexpected error: { lx_root->get_text( ) }|.
+        RETURN.
+    ENDTRY.
+  ENDMETHOD.
+ENDCLASS.
+
+CLASS lcl_aging_service DEFINITION FINAL.
+  PUBLIC SECTION.
+    "! Service (SRP): enriches open items with aging logic + currency conversion + traffic-light indicators.
+    "! No DB access (no SELECT); pure business enrichment.
+    CLASS-METHODS build_output
+      IMPORTING
+        "! Selection/configuration (reporting currency, exchange rate type, company code)
+        is_sel   TYPE ty_selection
+        "! Source open items (AR/AP) without business logic applied
+        it_items TYPE tt_item_src
+      RETURNING
+        "! Enriched output for ALV
+        VALUE(rt_out) TYPE tt_out.
+ENDCLASS.
+
+CLASS lcl_aging_service IMPLEMENTATION.
+  METHOD build_output.
+    DATA(lv_rep_waers) = COND waers( WHEN is_sel-rep_waers IS INITIAL THEN 'USD'
+                                    ELSE is_sel-rep_waers ).
+
+    rt_out = VALUE #( ).
+
+    LOOP AT it_items ASSIGNING FIELD-SYMBOL(<ls_item>).
+      DATA(ls_out) = CORRESPONDING ty_out( <ls_item> ).
+
+      ls_out-rep_waers = lv_rep_waers.
+
+      " Days open + bucket/status/text/icon
+      IF <ls_item>-budat IS INITIAL.
+        ls_out-days_open   = 0.
+        ls_out-bucket      = '0-30'.
+        ls_out-bucket_text = '0-30 days'.
+        ls_out-status      = gc_status_yellow.
+        ls_out-status_text = 'Warning'.
+        ls_out-icon        = icon_yellow_light.
+
+        ls_out-conv_msg = COND string(
+          WHEN ls_out-conv_msg IS INITIAL THEN |Missing posting date (BUDAT).|
+          ELSE ls_out-conv_msg ).
+      ELSE.
+        ls_out-days_open = sy-datum - <ls_item>-budat.
+
+        IF ls_out-days_open <= 30.
+          ls_out-bucket      = '0-30'.
+          ls_out-bucket_text = '0-30 days'.
+          ls_out-status      = gc_status_green.
+          ls_out-status_text = 'Green'.
+          ls_out-icon        = icon_green_light.
+        ELSEIF ls_out-days_open <= 60.
+          ls_out-bucket      = '31-60'.
+          ls_out-bucket_text = '31-60 days'.
+          ls_out-status      = gc_status_yellow.
+          ls_out-status_text = 'Yellow'.
+          ls_out-icon        = icon_yellow_light.
+        ELSEIF ls_out-days_open <= 90.
+          ls_out-bucket      = '61-90'.
+          ls_out-bucket_text = '61-90 days'.
+          ls_out-status      = gc_status_orange.
+          ls_out-status_text = 'Orange'.
+          ls_out-icon        = icon_yellow_light.
+        ELSE.
+          ls_out-bucket      = '>90'.
+          ls_out-bucket_text = '>90 days'.
+          ls_out-status      = gc_status_red.
+          ls_out-status_text = 'Red'.
+          ls_out-icon        = icon_red_light.
+        ENDIF.
+      ENDIF.
+
+      " Currency conversion (delegates to lcl_currency_converter)
+      IF <ls_item>-waers IS INITIAL.
+        ls_out-amount_rep = <ls_item>-amount_orig.
+        ls_out-conv_error = abap_true.
+        ls_out-conv_msg   = COND string(
+          WHEN ls_out-conv_msg IS INITIAL THEN |Missing source currency (WAERS).|
+          ELSE ls_out-conv_msg && ` ` && |Missing source currency (WAERS).| ).
+      ELSEIF <ls_item>-waers = lv_rep_waers.
+        ls_out-amount_rep = <ls_item>-amount_orig.
+        ls_out-conv_error = abap_false.
+      ELSE.
+        DATA(ls_conv) = lcl_currency_converter=>convert_amount(
+          VALUE ty_conversion_params(
+            amount_from   = <ls_item>-amount_orig
+            currency_from = <ls_item>-waers
+            currency_to   = lv_rep_waers
+            conv_date     = <ls_item>-budat
+            exch_type     = is_sel-ex_rate_type
+            company_code  = is_sel-bukrs ) ).
+
+        ls_out-amount_rep = ls_conv-amount_to.
+        ls_out-conv_error = COND abap_bool( WHEN ls_conv-status = 'E' THEN abap_true ELSE abap_false ).
+        ls_out-conv_msg   = ls_conv-message.
+      ENDIF.
+
+      APPEND ls_out TO rt_out.
+    ENDLOOP.
+  ENDMETHOD.
+ENDCLASS.
+
+*START-OF-SELECTION.
+*
+*  " Prueba rápida de conversión
+*  DATA(ls_params) = VALUE ty_conversion_params(
+*    amount_from   = '1000.00'
+*    currency_from = 'EUR'
+*    currency_to   = 'USD'
+*    conv_date     = sy-datum
+*    exch_type     = 'M'
+*    company_code  = '1000'
+*  ).
+*
+*  DATA(ls_result) = lcl_currency_converter=>convert_amount( ls_params ).
+*
+*  WRITE: / 'Importe original:', ls_params-amount_from, ls_params-currency_from.
+*  WRITE: / 'Importe convertido:', ls_result-amount_to, ls_params-currency_to.
+*  WRITE: / 'Status:', ls_result-status.
+*  IF ls_result-message IS NOT INITIAL.
+*    WRITE: / 'Mensaje:', ls_result-message.
+*  ENDIF.
