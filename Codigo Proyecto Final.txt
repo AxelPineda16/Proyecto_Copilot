@@ -1,0 +1,2071 @@
+INTERFACE zif_bp_audit_types PUBLIC.
+
+  "! <p class="shorttext synchronized">Tipos base para Auditoría de Business Partners</p>
+  "! Define estructuras comunes (BP, issues, propuestas y resultados) usadas por el proceso de auditoría.
+  "! <h3>Convenciones</h3>
+  "! <ul>
+  "!   <li><strong>partner_type:</strong> 'P' Persona / 'O' Organización</li>
+  "!   <li><strong>severity:</strong> 'S' OK / 'W' Warning / 'E' Error</li>
+  "!   <li><strong>status_global:</strong> 'S' OK / 'W' Warning / 'E' Error</li>
+  "! </ul>
+
+  TYPES: BEGIN OF ty_bp,
+           "! <p class="shorttext synchronized">Identificador del BP</p>
+           "! Llave lógica del BP (string) usada para correlación entre tablas/salidas.
+           partner      TYPE string,
+
+           "! <p class="shorttext synchronized">Tipo de BP</p>
+           "! 'P' = Persona, 'O' = Organización.
+           partner_type TYPE c LENGTH 1, "P = Persona, O = Organización
+
+           "! <p class="shorttext synchronized">NIT</p>
+           "! NIT del BP (aplica típicamente para Organización según reglas del validador).
+           nit          TYPE string,
+
+           "! <p class="shorttext synchronized">DPI</p>
+           "! DPI del BP (aplica típicamente para Persona según reglas del validador).
+           dpi          TYPE string,
+
+           "! <p class="shorttext synchronized">Email</p>
+           "! Email del BP (validación de formato según reglas del validador).
+           email        TYPE string,
+
+           "! <p class="shorttext synchronized">Teléfono</p>
+           "! Teléfono del BP (validación de formato según reglas del validador).
+           phone        TYPE string,
+         END OF ty_bp.
+
+  "! <p class="shorttext synchronized">Lista de Business Partners</p>
+  TYPES tt_bp TYPE STANDARD TABLE OF ty_bp WITH EMPTY KEY.
+
+  TYPES: BEGIN OF ty_issue,
+           "! <p class="shorttext synchronized">Identificador del BP</p>
+           "! BP asociado al hallazgo.
+           partner     TYPE string,
+
+           "! <p class="shorttext synchronized">Severidad del hallazgo</p>
+           "! 'S' = OK, 'W' = Warning, 'E' = Error.
+           severity    TYPE c LENGTH 1, "S = OK, W = Warning, E = Error
+
+           "! <p class="shorttext synchronized">Regla aplicada</p>
+           "! Identificador de regla/validador que generó el issue (para trazabilidad).
+           rule_id     TYPE string,
+
+           "! <p class="shorttext synchronized">Campo evaluado</p>
+           "! Nombre lógico del campo (ej. NIT, DPI, EMAIL, PHONE).
+           field_name  TYPE string,
+
+           "! <p class="shorttext synchronized">Mensaje</p>
+           "! Texto del hallazgo para visualización (ALV/reporte).
+           message     TYPE string,
+
+           "! <p class="shorttext synchronized">Valor encontrado</p>
+           "! Valor evaluado (normalizado/trim según aplique) que causó el issue.
+           found_value TYPE string,
+         END OF ty_issue.
+
+  "! <p class="shorttext synchronized">Lista de issues</p>
+  TYPES tt_issue TYPE STANDARD TABLE OF ty_issue WITH EMPTY KEY.
+
+  TYPES: BEGIN OF ty_proposal,
+           "! <p class="shorttext synchronized">Identificador del BP</p>
+           "! BP al que aplica la propuesta.
+           partner    TYPE string,
+
+           "! <p class="shorttext synchronized">Campo propuesto</p>
+           "! Nombre lógico del campo (ej. EMAIL, PHONE).
+           field_name TYPE string,
+
+           "! <p class="shorttext synchronized">Valor anterior</p>
+           "! Valor actual/original.
+           old_value  TYPE string,
+
+           "! <p class="shorttext synchronized">Valor nuevo</p>
+           "! Valor sugerido por normalización/corrección.
+           new_value  TYPE string,
+
+           "! <p class="shorttext synchronized">Razón</p>
+           "! Motivo de la propuesta (ej. trim, prefijo país, normalización).
+           reason     TYPE string,
+         END OF ty_proposal.
+
+  "! <p class="shorttext synchronized">Lista de propuestas</p>
+  TYPES tt_proposal TYPE STANDARD TABLE OF ty_proposal WITH EMPTY KEY.
+
+  TYPES: BEGIN OF ty_result,
+           "! <p class="shorttext synchronized">Identificador del BP</p>
+           "! BP resumido.
+           partner       TYPE string,
+
+           "! <p class="shorttext synchronized">Tipo de BP</p>
+           "! 'P' Persona / 'O' Organización.
+           partner_type  TYPE c LENGTH 1, "P / O
+
+           "! <p class="shorttext synchronized">Status global</p>
+           "! 'S' OK / 'W' Warning / 'E' Error (prioridad típica E > W > S).
+           status_global TYPE c LENGTH 1, "S / W / E
+
+           "! <p class="shorttext synchronized">Cantidad de errores</p>
+           "! Total de issues con severidad 'E'.
+           err_count     TYPE i,
+
+           "! <p class="shorttext synchronized">Cantidad de warnings</p>
+           "! Total de issues con severidad 'W'.
+           warn_count    TYPE i,
+
+           "! <p class="shorttext synchronized">Resumen textual</p>
+           "! Resumen compacto (ej. "E:n W:n") para ALV/reporte.
+           summary       TYPE string,
+         END OF ty_result.
+
+  "! <p class="shorttext synchronized">Lista de resultados</p>
+  TYPES tt_result TYPE STANDARD TABLE OF ty_result WITH EMPTY KEY.
+
+ENDINTERFACE.
+
+
+
+
+
+
+
+INTERFACE zif_bp_validator_ap PUBLIC.
+
+  "! <p class="shorttext synchronized">Contrato de validación BP (Auditoría)</p>
+  "! Define el modelo de entrada (BP) y salida (issues) para validadores del proceso de auditoría.
+  "!
+  "! <h3>Convenciones</h3>
+  "! <ul>
+  "!   <li><strong>partner_type:</strong> 'P' (Persona) / 'O' (Organización)</li>
+  "!   <li><strong>severity:</strong> 'S' (OK) / 'W' (Advertencia) / 'E' (Error)</li>
+  "!   <li><strong>field_name:</strong> nombre lógico del campo (NIT, DPI, EMAIL, PHONE)</li>
+  "!   <li><strong>found_value:</strong> valor evaluado (normalizado según cada validador)</li>
+  "! </ul>
+
+  TYPES: BEGIN OF ty_bp,
+           "! <p class="shorttext synchronized">Business Partner</p>
+           "! Identificador del BP (tabla ZBP_AP_BP-PARTNER).
+           partner      TYPE zbp_ap_bp-partner,
+
+           "! <p class="shorttext synchronized">Tipo de BP</p>
+           "! 'P' Persona / 'O' Organización.
+           partner_type TYPE zbp_ap_bp-partner_type,
+
+           "! <p class="shorttext synchronized">NIT</p>
+           "! Aplica para Organización (partner_type = 'O'), según reglas del validador.
+           nit          TYPE zbp_ap_bp-nit,
+
+           "! <p class="shorttext synchronized">DPI</p>
+           "! Aplica para Persona (partner_type = 'P'), según reglas del validador.
+           dpi          TYPE zbp_ap_bp-dpi,
+
+           "! <p class="shorttext synchronized">Email</p>
+           "! Correo a validar (reglas dependen del validador).
+           email        TYPE zbp_ap_bp-email,
+
+           "! <p class="shorttext synchronized">Teléfono</p>
+           "! Teléfono a validar (reglas dependen del validador).
+           phone        TYPE zbp_ap_bp-phone,
+         END OF ty_bp.
+
+  "! <p class="shorttext synchronized">Lista de BPs</p>
+  TYPES tt_bp TYPE STANDARD TABLE OF ty_bp WITH EMPTY KEY.
+
+  TYPES: BEGIN OF ty_issue,
+           "! <p class="shorttext synchronized">Business Partner</p>
+           "! BP asociado al hallazgo.
+           partner     TYPE zbp_ap_bp-partner,
+
+           "! <p class="shorttext synchronized">Severidad</p>
+           "! 'S' OK / 'W' Advertencia / 'E' Error.
+           severity    TYPE c LENGTH 1,
+
+           "! <p class="shorttext synchronized">Campo lógico</p>
+           "! Campo evaluado (ej. NIT, DPI, EMAIL, PHONE).
+           field_name  TYPE string,
+
+           "! <p class="shorttext synchronized">Mensaje de validación</p>
+           "! Texto para reporte/ALV.
+           message     TYPE string,
+
+           "! <p class="shorttext synchronized">Valor encontrado</p>
+           "! Valor evaluado (normalizado/trim según implementación).
+           found_value TYPE string,
+         END OF ty_issue.
+
+  "! <p class="shorttext synchronized">Lista de issues</p>
+  TYPES tt_issue TYPE STANDARD TABLE OF ty_issue WITH EMPTY KEY.
+
+  "! <p class="shorttext synchronized">Valida BPs y retorna issues</p>
+  "! Ejecuta reglas de validación específicas de la implementación.
+  "! El resultado puede incluir 0..n issues por BP.
+  "!
+  "! @parameter it_bp | BPs a validar (modelo de tabla ZBP_AP_BP).
+  "! @returning rt_issues | Issues detectados (severidad S/W/E, campo, mensaje y valor evaluado).
+  METHODS validate
+    IMPORTING
+      it_bp TYPE tt_bp
+    RETURNING
+      VALUE(rt_issues) TYPE tt_issue.
+
+ENDINTERFACE.
+
+
+
+
+
+CLASS zcl_bp_val_nit_ap DEFINITION
+  PUBLIC
+  FINAL
+  CREATE PUBLIC.
+
+  PUBLIC SECTION.
+    "! <p class="shorttext synchronized">Validador de NIT para Business Partner</p>
+    "! Valida el NIT únicamente para BPs de tipo Organización (partner_type = 'O').
+    "! Regla: NIT obligatorio y con formato <strong>^\d{8,9}-\d$</strong> (8/9 dígitos, guion y 1 dígito verificador).
+    INTERFACES zif_bp_validator_ap.
+
+  PRIVATE SECTION.
+    CONSTANTS:
+      c_partner_type_org TYPE c LENGTH 1 VALUE 'O',
+      c_sev_error        TYPE c LENGTH 1 VALUE 'E',
+      c_field_nit        TYPE string VALUE 'NIT'.
+
+    "! <p class="shorttext synchronized">Normaliza NIT</p>
+    "! Elimina espacios y deja el valor sin separadores de espacio (NO-GAPS).
+    "! @parameter iv_nit | NIT original (puede incluir espacios).
+    "! @returning rv_nit | NIT normalizado sin espacios.
+    METHODS normalize_nit
+      IMPORTING
+        iv_nit        TYPE csequence
+      RETURNING
+        VALUE(rv_nit) TYPE string.
+
+    "! <p class="shorttext synchronized">Valida formato de NIT</p>
+    "! Regla: solo dígitos y guion, con patrón ^\d{8,9}-\d$.
+    "! @parameter iv_nit | NIT a validar (se normaliza internamente).
+    "! @returning rv_valid | 'X' si cumple formato esperado.
+    METHODS is_nit_valid
+      IMPORTING
+        iv_nit          TYPE csequence
+      RETURNING
+        VALUE(rv_valid) TYPE abap_bool.
+
+    "! <p class="shorttext synchronized">Agrega issue de error</p>
+    "! Crea un registro de issue para el BP actual con severidad 'E' y campo 'NIT'.
+    "! @parameter is_bp | BP evaluado.
+    "! @parameter iv_message | Mensaje de validación.
+    "! @parameter iv_found_value | Valor detectado (normalizado) que causó el issue.
+    "! @changing ct_issues | Tabla acumulada de issues.
+    METHODS add_issue_error
+      IMPORTING
+        is_bp          TYPE zif_bp_validator_ap=>ty_bp
+        iv_message     TYPE string
+        iv_found_value TYPE string
+      CHANGING
+        ct_issues      TYPE zif_bp_validator_ap=>tt_issue.
+
+ENDCLASS.
+
+CLASS zcl_bp_val_nit_ap IMPLEMENTATION.
+
+  METHOD zif_bp_validator_ap~validate.
+    rt_issues = VALUE #( ).
+
+    LOOP AT it_bp INTO DATA(ls_bp).
+      IF ls_bp-partner_type <> c_partner_type_org.
+        CONTINUE.
+      ENDIF.
+
+      DATA(lv_nit) = normalize_nit( CONV string( ls_bp-nit ) ).
+
+      IF lv_nit IS INITIAL.
+        add_issue_error(
+          EXPORTING
+            is_bp          = ls_bp
+            iv_message     = |NIT requerido para organización|
+            iv_found_value = lv_nit
+          CHANGING
+            ct_issues      = rt_issues ).
+        CONTINUE.
+      ENDIF.
+
+      IF is_nit_valid( lv_nit ) = abap_false.
+        add_issue_error(
+          EXPORTING
+            is_bp          = ls_bp
+            iv_message     = |Formato de NIT inválido. Se espera XXXXXXXX-X con 8 o 9 dígitos, guion y 1 dígito verificador|
+            iv_found_value = lv_nit
+          CHANGING
+            ct_issues      = rt_issues ).
+        CONTINUE.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD normalize_nit.
+    rv_nit = CONV string( iv_nit ).
+    CONDENSE rv_nit NO-GAPS.
+  ENDMETHOD.
+
+  METHOD is_nit_valid.
+    rv_valid = abap_false.
+
+    DATA(lv_nit) = CONV string( iv_nit ).
+    CONDENSE lv_nit NO-GAPS.
+
+    IF lv_nit IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    IF lv_nit CO '0123456789-'.
+    ELSE.
+      RETURN.
+    ENDIF.
+
+    FIND REGEX '^\d{8,9}-\d$' IN lv_nit MATCH COUNT DATA(lv_hits).
+    rv_valid = xsdbool( lv_hits = 1 ).
+  ENDMETHOD.
+
+  METHOD add_issue_error.
+    APPEND VALUE zif_bp_validator_ap=>ty_issue(
+      partner     = is_bp-partner
+      severity    = c_sev_error
+      field_name  = c_field_nit
+      message     = iv_message
+      found_value = iv_found_value ) TO ct_issues.
+  ENDMETHOD.
+
+ENDCLASS.
+
+
+
+
+
+
+
+CLASS zcl_bp_val_dpi_ap DEFINITION
+  PUBLIC
+  FINAL
+  CREATE PUBLIC.
+
+  PUBLIC SECTION.
+    "! <p class="shorttext synchronized">Validador de DPI para Business Partner</p>
+    "! Valida el DPI únicamente para BPs de tipo Persona (partner_type = 'P').
+    "! Regla: DPI obligatorio y con formato de <strong>13 dígitos</strong> consecutivos (0-9), sin espacios ni guiones.
+    INTERFACES zif_bp_validator_ap.
+
+  PRIVATE SECTION.
+    CONSTANTS:
+      c_partner_type_person TYPE c LENGTH 1 VALUE 'P',
+      c_sev_error           TYPE c LENGTH 1 VALUE 'E',
+      c_field_dpi           TYPE string VALUE 'DPI',
+      c_digits              TYPE string VALUE '0123456789'.
+
+    "! <p class="shorttext synchronized">Normaliza DPI</p>
+    "! Elimina espacios y deja el valor sin separadores de espacio (NO-GAPS).
+    "! @parameter iv_dpi | DPI original (puede incluir espacios).
+    "! @returning rv_dpi | DPI normalizado sin espacios.
+    METHODS normalize_dpi
+      IMPORTING
+        iv_dpi        TYPE csequence
+      RETURNING
+        VALUE(rv_dpi) TYPE string.
+
+    "! <p class="shorttext synchronized">Valida formato de DPI</p>
+    "! Regla: longitud 13 y únicamente dígitos (0-9).
+    "! @parameter iv_dpi | DPI a validar (se normaliza internamente).
+    "! @returning rv_valid | 'X' si cumple formato esperado.
+    METHODS is_dpi_valid
+      IMPORTING
+        iv_dpi          TYPE csequence
+      RETURNING
+        VALUE(rv_valid) TYPE abap_bool.
+
+    "! <p class="shorttext synchronized">Agrega issue de error</p>
+    "! Crea un registro de issue para el BP actual con severidad 'E' y campo 'DPI'.
+    "! @parameter is_bp | BP evaluado.
+    "! @parameter iv_message | Mensaje de validación.
+    "! @parameter iv_found_value | Valor detectado (normalizado) que causó el issue.
+    "! @changing ct_issues | Tabla acumulada de issues.
+    METHODS add_issue_error
+      IMPORTING
+        is_bp          TYPE zif_bp_validator_ap=>ty_bp
+        iv_message     TYPE string
+        iv_found_value TYPE string
+      CHANGING
+        ct_issues      TYPE zif_bp_validator_ap=>tt_issue.
+
+ENDCLASS.
+
+CLASS zcl_bp_val_dpi_ap IMPLEMENTATION.
+
+  METHOD zif_bp_validator_ap~validate.
+    rt_issues = VALUE #( ).
+
+    LOOP AT it_bp INTO DATA(ls_bp).
+      IF ls_bp-partner_type <> c_partner_type_person.
+        CONTINUE.
+      ENDIF.
+
+      DATA(lv_dpi) = normalize_dpi( ls_bp-dpi ).
+
+      IF lv_dpi IS INITIAL.
+        add_issue_error(
+          EXPORTING
+            is_bp          = ls_bp
+            iv_message     = |DPI requerido para persona|
+            iv_found_value = lv_dpi
+          CHANGING
+            ct_issues      = rt_issues ).
+        CONTINUE.
+      ENDIF.
+
+      IF is_dpi_valid( lv_dpi ) = abap_false.
+        add_issue_error(
+          EXPORTING
+            is_bp          = ls_bp
+            iv_message     = |Formato de DPI inválido. Se esperan exactamente 13 dígitos consecutivos (0-9), sin espacios ni guiones|
+            iv_found_value = lv_dpi
+          CHANGING
+            ct_issues      = rt_issues ).
+        CONTINUE.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD normalize_dpi.
+    rv_dpi = CONV string( iv_dpi ).
+    CONDENSE rv_dpi NO-GAPS.
+  ENDMETHOD.
+
+  METHOD is_dpi_valid.
+    rv_valid = abap_false.
+
+    DATA(lv_dpi) = normalize_dpi( iv_dpi ).
+
+    IF strlen( lv_dpi ) <> 13.
+      RETURN.
+    ENDIF.
+
+    rv_valid = xsdbool( lv_dpi CO c_digits ).
+  ENDMETHOD.
+
+  METHOD add_issue_error.
+    APPEND VALUE zif_bp_validator_ap=>ty_issue(
+      partner     = is_bp-partner
+      severity    = c_sev_error
+      field_name  = c_field_dpi
+      message     = iv_message
+      found_value = iv_found_value ) TO ct_issues.
+  ENDMETHOD.
+
+ENDCLASS.
+
+
+
+
+
+
+
+
+CLASS zcl_bp_val_contact_ap DEFINITION
+  PUBLIC
+  FINAL
+  CREATE PUBLIC.
+
+  PUBLIC SECTION.
+    "! <p class="shorttext synchronized">Validador de Email y Teléfono para Business Partner</p>
+    "! Valida datos de contacto (EMAIL/PHONE) para cualquier tipo de BP.
+    "! <ul>
+    "!   <li><strong>Email:</strong> warning si vacío; error si el formato básico es inválido.</li>
+    "!   <li><strong>Teléfono:</strong> warning si vacío; error si no cumple formato Guatemala <strong>+502########</strong>.</li>
+    "! </ul>
+    INTERFACES zif_bp_validator_ap.
+
+  PRIVATE SECTION.
+    CONSTANTS:
+      c_sev_warning TYPE zif_bp_validator_ap=>ty_issue-severity VALUE 'W',
+      c_sev_error   TYPE zif_bp_validator_ap=>ty_issue-severity VALUE 'E',
+      c_field_email TYPE string VALUE 'EMAIL',
+      c_field_phone TYPE string VALUE 'PHONE',
+      c_digits      TYPE string VALUE '0123456789',
+      c_prefix_gt   TYPE string VALUE '+502'.
+
+    "! <p class="shorttext synchronized">Trim básico</p>
+    "! Remueve espacios al inicio/fin y condensa múltiples espacios internos a uno.
+    "! @parameter iv_value | Valor original.
+    "! @returning rv_value | Valor con trim aplicado.
+    METHODS trim_value
+      IMPORTING
+        iv_value        TYPE csequence
+      RETURNING
+        VALUE(rv_value) TYPE string.
+
+    "! <p class="shorttext synchronized">Normaliza teléfono</p>
+    "! Elimina todos los espacios (NO-GAPS) para validar formato.
+    "! @parameter iv_phone | Teléfono original.
+    "! @returning rv_phone | Teléfono sin espacios.
+    METHODS normalize_phone
+      IMPORTING
+        iv_phone        TYPE csequence
+      RETURNING
+        VALUE(rv_phone) TYPE string.
+
+    "! <p class="shorttext synchronized">Valida formato básico de email</p>
+    "! Reglas mínimas: sin espacios, un '@' separando usuario/dominio, dominio con al menos un punto.
+    "! @parameter iv_email | Email a validar.
+    "! @returning rv_valid | 'X' si cumple reglas básicas.
+    METHODS is_email_valid_basic
+      IMPORTING
+        iv_email        TYPE csequence
+      RETURNING
+        VALUE(rv_valid) TYPE abap_bool.
+
+    "! <p class="shorttext synchronized">Valida teléfono Guatemala (+502)</p>
+    "! Regla: exactamente 12 caracteres: '+502' + 8 dígitos.
+    "! @parameter iv_phone | Teléfono a validar (se normaliza internamente).
+    "! @returning rv_valid | 'X' si cumple formato +502########.
+    METHODS is_phone_valid_gt
+      IMPORTING
+        iv_phone        TYPE csequence
+      RETURNING
+        VALUE(rv_valid) TYPE abap_bool.
+
+    "! <p class="shorttext synchronized">Agrega issue de validación</p>
+    "! Crea un issue con severidad y campo indicado para el BP evaluado.
+    "! @parameter is_bp | BP evaluado.
+    "! @parameter iv_severity | Severidad del issue (W/E).
+    "! @parameter iv_field_name | Campo asociado (EMAIL/PHONE).
+    "! @parameter iv_message | Mensaje de validación.
+    "! @parameter iv_found_value | Valor detectado.
+    "! @changing ct_issues | Tabla acumulada de issues.
+    METHODS add_issue
+      IMPORTING
+        is_bp          TYPE zif_bp_validator_ap=>ty_bp
+        iv_severity    TYPE zif_bp_validator_ap=>ty_issue-severity
+        iv_field_name  TYPE string
+        iv_message     TYPE string
+        iv_found_value TYPE string
+      CHANGING
+        ct_issues      TYPE zif_bp_validator_ap=>tt_issue.
+
+ENDCLASS.
+
+CLASS zcl_bp_val_contact_ap IMPLEMENTATION.
+
+  METHOD zif_bp_validator_ap~validate.
+    rt_issues = VALUE #( ).
+
+    LOOP AT it_bp INTO DATA(ls_bp).
+
+      DATA(lv_email) = trim_value( ls_bp-email ).
+      IF lv_email IS INITIAL.
+        add_issue(
+          EXPORTING
+            is_bp          = ls_bp
+            iv_severity    = c_sev_warning
+            iv_field_name  = c_field_email
+            iv_message     = |Email no informado|
+            iv_found_value = lv_email
+          CHANGING
+            ct_issues      = rt_issues ).
+      ELSEIF is_email_valid_basic( lv_email ) = abap_false.
+        add_issue(
+          EXPORTING
+            is_bp          = ls_bp
+            iv_severity    = c_sev_error
+            iv_field_name  = c_field_email
+            iv_message     = |Email inválido|
+            iv_found_value = lv_email
+          CHANGING
+            ct_issues      = rt_issues ).
+      ENDIF.
+
+      DATA(lv_phone) = normalize_phone( ls_bp-phone ).
+      IF lv_phone IS INITIAL.
+        add_issue(
+          EXPORTING
+            is_bp          = ls_bp
+            iv_severity    = c_sev_warning
+            iv_field_name  = c_field_phone
+            iv_message     = |Teléfono no informado|
+            iv_found_value = lv_phone
+          CHANGING
+            ct_issues      = rt_issues ).
+      ELSEIF is_phone_valid_gt( lv_phone ) = abap_false.
+        add_issue(
+          EXPORTING
+            is_bp          = ls_bp
+            iv_severity    = c_sev_error
+            iv_field_name  = c_field_phone
+            iv_message     = |Teléfono inválido|
+            iv_found_value = lv_phone
+          CHANGING
+            ct_issues      = rt_issues ).
+      ENDIF.
+
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD trim_value.
+    rv_value = CONV string( iv_value ).
+    CONDENSE rv_value.
+  ENDMETHOD.
+
+  METHOD normalize_phone.
+    rv_phone = CONV string( iv_phone ).
+    CONDENSE rv_phone NO-GAPS.
+  ENDMETHOD.
+
+  METHOD is_email_valid_basic.
+    rv_valid = abap_false.
+
+    DATA(lv_email) = trim_value( iv_email ).
+
+    IF lv_email IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    IF lv_email CS space.
+      RETURN.
+    ENDIF.
+
+    IF lv_email CP '@*' OR lv_email CP '*@' OR lv_email CP '.*' OR lv_email CP '*.'.
+      RETURN.
+    ENDIF.
+
+    DATA: lt_parts  TYPE STANDARD TABLE OF string WITH EMPTY KEY,
+          lv_domain TYPE string.
+
+    SPLIT lv_email AT '@' INTO TABLE lt_parts.
+    IF lines( lt_parts ) <> 2.
+      RETURN.
+    ENDIF.
+
+    READ TABLE lt_parts INDEX 2 INTO lv_domain.
+    IF sy-subrc <> 0 OR lv_domain IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    IF lv_domain CP '*.*'.
+      rv_valid = abap_true.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD is_phone_valid_gt.
+    rv_valid = abap_false.
+
+    DATA(lv_phone) = normalize_phone( iv_phone ).
+
+    IF strlen( lv_phone ) <> 12.
+      RETURN.
+    ENDIF.
+
+    IF lv_phone(4) <> c_prefix_gt.
+      RETURN.
+    ENDIF.
+
+    DATA(lv_rest) = lv_phone+4(8).
+    rv_valid = xsdbool( lv_rest CO c_digits ).
+  ENDMETHOD.
+
+  METHOD add_issue.
+    APPEND VALUE zif_bp_validator_ap=>ty_issue(
+      partner     = is_bp-partner
+      severity    = iv_severity
+      field_name  = iv_field_name
+      message     = iv_message
+      found_value = iv_found_value ) TO ct_issues.
+  ENDMETHOD.
+
+ENDCLASS.
+
+
+
+
+
+"! <p class="shorttext synchronized">Procesador de auditoría para BP (issues, resumen y propuestas)</p>
+"! Orquesta la validación de datos de Business Partners usando validadores
+"! ({@link zcl_bp_val_nit_ap}, {@link zcl_bp_val_dpi_ap}, {@link zcl_bp_val_contact_ap}),
+"! y genera:
+"! <ul>
+"!   <li><strong>Issues</strong> (E/W) por campo</li>
+"!   <li><strong>Resumen</strong> por BP con conteo de errores/advertencias</li>
+"!   <li><strong>Propuestas</strong> de corrección (normalizaciones simples)</li>
+"! </ul>
+"! Reglas actuales de propuestas:
+"! <ul>
+"!   <li>Trim de EMAIL y PHONE</li>
+"!   <li>Si PHONE tiene 8 dígitos numéricos, propone prefijo <strong>+502</strong></li>
+"! </ul>
+CLASS zcl_bp_audit_proc_ap DEFINITION
+  PUBLIC
+  FINAL
+  CREATE PUBLIC.
+
+  PUBLIC SECTION.
+    TYPES ty_status TYPE c LENGTH 1.
+
+    TYPES: BEGIN OF ty_result,
+             partner       TYPE zbp_ap_bp-partner,
+             partner_type  TYPE zbp_ap_bp-partner_type,
+             status_global TYPE ty_status,
+             err_count     TYPE i,
+             warn_count    TYPE i,
+             summary       TYPE string,
+           END OF ty_result.
+    TYPES tt_result TYPE STANDARD TABLE OF ty_result WITH EMPTY KEY.
+
+    TYPES: BEGIN OF ty_proposal,
+             partner    TYPE zbp_ap_bp-partner,
+             field_name TYPE string,
+             old_value  TYPE string,
+             new_value  TYPE string,
+             reason     TYPE string,
+           END OF ty_proposal.
+    TYPES tt_proposal TYPE STANDARD TABLE OF ty_proposal WITH EMPTY KEY.
+
+    "! <p class="shorttext synchronized">Ejecuta auditoría sobre BPs</p>
+    "! Normaliza la llave de BP (partner), ejecuta validadores y construye:
+    "! issues, resumen por BP y propuestas de corrección.
+    "! @parameter it_bp | Lista de BPs (estructura {@link zif_bp_validator_ap=>ty_bp}).
+    "! @exporting rt_issues | Issues generados por validación (severidad E/W).
+    "! @exporting rt_result | Resumen por BP: status_global, err_count, warn_count y summary.
+    "! @exporting rt_proposal | Propuestas de cambio (campo, valor anterior, valor nuevo y razón).
+    METHODS process
+      IMPORTING it_bp       TYPE zif_bp_validator_ap=>tt_bp
+      EXPORTING rt_issues   TYPE zif_bp_validator_ap=>tt_issue
+                rt_result   TYPE tt_result
+                rt_proposal TYPE tt_proposal.
+
+  PRIVATE SECTION.
+    TYPES: BEGIN OF ty_counts,
+             partner    TYPE zbp_ap_bp-partner,
+             err_count  TYPE i,
+             warn_count TYPE i,
+           END OF ty_counts.
+    TYPES tt_counts TYPE HASHED TABLE OF ty_counts WITH UNIQUE KEY partner.
+
+    CONSTANTS c_sev_success TYPE c LENGTH 1 VALUE 'S'.
+    CONSTANTS c_sev_warning TYPE c LENGTH 1 VALUE 'W'.
+    CONSTANTS c_sev_error   TYPE c LENGTH 1 VALUE 'E'.
+    CONSTANTS c_phone_cc    TYPE string     VALUE '+502'.
+    CONSTANTS c_digits      TYPE string     VALUE '0123456789'.
+    CONSTANTS c_field_email TYPE string     VALUE 'EMAIL'.
+    CONSTANTS c_field_phone TYPE string     VALUE 'PHONE'.
+
+    METHODS normalize_partner
+      IMPORTING iv_partner        TYPE any
+      RETURNING VALUE(rv_partner) TYPE string.
+
+    METHODS sanitize_bp_input
+      IMPORTING it_bp        TYPE zif_bp_validator_ap=>tt_bp
+      RETURNING VALUE(rt_bp) TYPE zif_bp_validator_ap=>tt_bp.
+
+    METHODS run_validators
+      IMPORTING it_bp            TYPE zif_bp_validator_ap=>tt_bp
+      RETURNING VALUE(rt_issues) TYPE zif_bp_validator_ap=>tt_issue.
+
+    METHODS build_counts
+      IMPORTING it_issues        TYPE zif_bp_validator_ap=>tt_issue
+      RETURNING VALUE(rt_counts) TYPE tt_counts.
+
+    METHODS determine_status
+      IMPORTING iv_err_count     TYPE i
+                iv_warn_count    TYPE i
+      RETURNING VALUE(rv_status) TYPE ty_status.
+
+    METHODS build_summary
+      IMPORTING iv_err_count      TYPE i
+                iv_warn_count     TYPE i
+      RETURNING VALUE(rv_summary) TYPE string.
+
+    METHODS build_results
+      IMPORTING it_bp            TYPE zif_bp_validator_ap=>tt_bp
+                it_counts        TYPE tt_counts
+      RETURNING VALUE(rt_result) TYPE tt_result.
+
+    METHODS build_proposals
+      IMPORTING it_bp              TYPE zif_bp_validator_ap=>tt_bp
+      RETURNING VALUE(rt_proposal) TYPE tt_proposal.
+
+    METHODS normalize_trim
+      IMPORTING iv_value        TYPE csequence
+      RETURNING VALUE(rv_value) TYPE string.
+
+    METHODS add_proposal
+      IMPORTING is_bp         TYPE zif_bp_validator_ap=>ty_bp
+                iv_field_name TYPE string
+                iv_old        TYPE csequence
+                iv_new        TYPE csequence
+                iv_reason     TYPE string
+      CHANGING  ct_proposal   TYPE tt_proposal.
+
+ENDCLASS.
+
+CLASS zcl_bp_audit_proc_ap IMPLEMENTATION.
+
+  METHOD process.
+    DATA(lt_bp) = sanitize_bp_input( it_bp ).
+
+    rt_issues = run_validators( lt_bp ).
+
+    DATA(lt_counts) = build_counts( rt_issues ).
+
+    rt_result = build_results(
+      it_bp     = lt_bp
+      it_counts = lt_counts ).
+
+    rt_proposal = build_proposals( lt_bp ).
+  ENDMETHOD.
+
+  METHOD normalize_partner.
+    rv_partner = |{ iv_partner }|.
+    CONDENSE rv_partner NO-GAPS.
+  ENDMETHOD.
+
+  METHOD sanitize_bp_input.
+    CLEAR rt_bp.
+
+    LOOP AT it_bp ASSIGNING FIELD-SYMBOL(<ls_bp>).
+      DATA(ls_bp_out) = <ls_bp>.
+      ls_bp_out-partner = normalize_partner( <ls_bp>-partner ).
+      APPEND ls_bp_out TO rt_bp.
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD run_validators.
+    CLEAR rt_issues.
+
+    DATA: lt_validators TYPE STANDARD TABLE OF REF TO zif_bp_validator_ap WITH EMPTY KEY,
+          lo_validator  TYPE REF TO zif_bp_validator_ap,
+          lt_new_issues TYPE zif_bp_validator_ap=>tt_issue.
+
+    APPEND NEW zcl_bp_val_nit_ap( )     TO lt_validators.
+    APPEND NEW zcl_bp_val_dpi_ap( )     TO lt_validators.
+    APPEND NEW zcl_bp_val_contact_ap( ) TO lt_validators.
+
+    LOOP AT lt_validators INTO lo_validator.
+      CLEAR lt_new_issues.
+      lt_new_issues = lo_validator->validate( it_bp ).
+
+      IF lt_new_issues IS NOT INITIAL.
+        LOOP AT lt_new_issues ASSIGNING FIELD-SYMBOL(<ls_i>).
+          <ls_i>-partner = normalize_partner( <ls_i>-partner ).
+        ENDLOOP.
+
+        APPEND LINES OF lt_new_issues TO rt_issues.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD build_counts.
+    CLEAR rt_counts.
+
+    LOOP AT it_issues INTO DATA(ls_issue).
+      READ TABLE rt_counts ASSIGNING FIELD-SYMBOL(<ls_cnt>)
+        WITH TABLE KEY partner = ls_issue-partner.
+
+      IF sy-subrc <> 0.
+        INSERT VALUE ty_counts(
+                 partner    = ls_issue-partner
+                 err_count  = 0
+                 warn_count = 0 ) INTO TABLE rt_counts ASSIGNING <ls_cnt>.
+      ENDIF.
+
+      IF <ls_cnt> IS ASSIGNED.
+        CASE ls_issue-severity.
+          WHEN c_sev_error.
+            <ls_cnt>-err_count = <ls_cnt>-err_count + 1.
+          WHEN c_sev_warning.
+            <ls_cnt>-warn_count = <ls_cnt>-warn_count + 1.
+        ENDCASE.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD determine_status.
+    IF iv_err_count > 0.
+      rv_status = c_sev_error.
+      RETURN.
+    ENDIF.
+
+    IF iv_warn_count > 0.
+      rv_status = c_sev_warning.
+      RETURN.
+    ENDIF.
+
+    rv_status = c_sev_success.
+  ENDMETHOD.
+
+  METHOD build_summary.
+    rv_summary = |E:{ iv_err_count } W:{ iv_warn_count }|.
+  ENDMETHOD.
+
+  METHOD build_results.
+    CLEAR rt_result.
+
+    LOOP AT it_bp INTO DATA(ls_bp).
+      DATA(ls_cnt) = VALUE ty_counts( partner = ls_bp-partner ).
+
+      READ TABLE it_counts INTO ls_cnt WITH TABLE KEY partner = ls_bp-partner.
+      IF sy-subrc <> 0.
+        CLEAR ls_cnt.
+        ls_cnt-partner = ls_bp-partner.
+      ENDIF.
+
+      DATA(lv_status) = determine_status(
+        iv_err_count  = ls_cnt-err_count
+        iv_warn_count = ls_cnt-warn_count ).
+
+      DATA(lv_sum) = build_summary(
+        iv_err_count  = ls_cnt-err_count
+        iv_warn_count = ls_cnt-warn_count ).
+
+      APPEND VALUE ty_result(
+        partner       = ls_bp-partner
+        partner_type  = ls_bp-partner_type
+        status_global = lv_status
+        err_count     = ls_cnt-err_count
+        warn_count    = ls_cnt-warn_count
+        summary       = lv_sum ) TO rt_result.
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD build_proposals.
+    CLEAR rt_proposal.
+
+    LOOP AT it_bp INTO DATA(ls_bp).
+
+      DATA(lv_email_old) = ls_bp-email.
+      DATA(lv_email_new) = normalize_trim( lv_email_old ).
+
+      IF lv_email_old IS NOT INITIAL AND lv_email_new <> lv_email_old.
+        add_proposal(
+          EXPORTING
+            is_bp         = ls_bp
+            iv_field_name = c_field_email
+            iv_old        = lv_email_old
+            iv_new        = lv_email_new
+            iv_reason     = |Trim email|
+          CHANGING
+            ct_proposal   = rt_proposal ).
+      ENDIF.
+
+      DATA(lv_phone_old) = ls_bp-phone.
+      DATA(lv_phone_new) = normalize_trim( lv_phone_old ).
+
+      IF lv_phone_old IS NOT INITIAL AND lv_phone_new <> lv_phone_old.
+        add_proposal(
+          EXPORTING
+            is_bp         = ls_bp
+            iv_field_name = c_field_phone
+            iv_old        = lv_phone_old
+            iv_new        = lv_phone_new
+            iv_reason     = |Trim phone|
+          CHANGING
+            ct_proposal   = rt_proposal ).
+      ENDIF.
+
+      IF lv_phone_new IS NOT INITIAL
+         AND strlen( lv_phone_new ) = 8
+         AND lv_phone_new CO c_digits.
+        add_proposal(
+          EXPORTING
+            is_bp         = ls_bp
+            iv_field_name = c_field_phone
+            iv_old        = lv_phone_new
+            iv_new        = |{ c_phone_cc }{ lv_phone_new }|
+            iv_reason     = |Prefix +502|
+          CHANGING
+            ct_proposal   = rt_proposal ).
+      ENDIF.
+
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD normalize_trim.
+    rv_value = CONV string( iv_value ).
+    CONDENSE rv_value.
+  ENDMETHOD.
+
+  METHOD add_proposal.
+    DATA ls_prop TYPE ty_proposal.
+
+    CLEAR ls_prop.
+    ls_prop-partner    = is_bp-partner.
+    ls_prop-field_name = iv_field_name.
+    ls_prop-old_value  = CONV string( iv_old ).
+    ls_prop-new_value  = CONV string( iv_new ).
+    ls_prop-reason     = iv_reason.
+
+    APPEND ls_prop TO ct_proposal.
+  ENDMETHOD.
+
+ENDCLASS.
+
+
+
+
+
+*&---------------------------------------------------------------------*
+*& Report  ZBP_AUDIT_REPORT_AP
+*&---------------------------------------------------------------------*
+REPORT zbp_audit_report_ap.
+
+INCLUDE <icon>.
+
+TABLES: zbp_ap_bp.
+
+SELECT-OPTIONS s_partnr FOR zbp_ap_bp-partner.
+
+PARAMETERS:
+  p_ptype TYPE c LENGTH 1 AS LISTBOX VISIBLE LENGTH 18 DEFAULT 'A',
+  p_sim   TYPE abap_bool AS CHECKBOX DEFAULT abap_true,
+  p_onlye TYPE abap_bool AS CHECKBOX.
+
+INITIALIZATION.
+  p_ptype = 'A'.
+
+AT SELECTION-SCREEN OUTPUT.
+  CALL FUNCTION 'VRM_SET_VALUES'
+    EXPORTING
+      id     = 'P_PTYPE'
+      values = VALUE vrm_values(
+        ( key = 'A' text = 'Todos' )
+        ( key = 'P' text = 'Persona' )
+        ( key = 'O' text = 'Organización' ) ).
+
+CLASS lcl_app DEFINITION FINAL.
+  PUBLIC SECTION.
+    CLASS-METHODS run.
+
+  PRIVATE SECTION.
+
+    TYPES: BEGIN OF ty_upd_res,
+             partner TYPE zbp_ap_bp-partner,
+             ok      TYPE abap_bool,
+             msgty   TYPE c LENGTH 1,
+             message TYPE string,
+           END OF ty_upd_res.
+    TYPES tt_upd_res TYPE HASHED TABLE OF ty_upd_res WITH UNIQUE KEY partner.
+
+    TYPES: BEGIN OF ty_prop_key,
+             partner    TYPE zbp_ap_bp-partner,
+             field_name TYPE string,
+             new_value  TYPE string,
+           END OF ty_prop_key.
+    TYPES tt_prop_key TYPE HASHED TABLE OF ty_prop_key WITH UNIQUE KEY partner field_name.
+
+    TYPES: BEGIN OF ty_alv,
+             bp              TYPE zbp_ap_bp-partner,
+             tipo            TYPE c LENGTH 1,
+             campo           TYPE string,
+             valor_actual    TYPE string,
+             valor_corregido TYPE string,
+             estado          TYPE c LENGTH 1,
+             estado_icon     TYPE icon_d,
+             mensaje         TYPE string,
+             upd_ok          TYPE abap_bool,
+             upd_msgty       TYPE c LENGTH 1,
+             upd_msg         TYPE string,
+           END OF ty_alv.
+    TYPES tt_alv TYPE STANDARD TABLE OF ty_alv WITH EMPTY KEY.
+
+    CLASS-DATA gv_run_ts TYPE zbp_ap_audlog-run_ts.
+    CLASS-DATA gv_seq    TYPE i.
+    CLASS-DATA gt_log    TYPE STANDARD TABLE OF zbp_ap_audlog WITH EMPTY KEY.
+
+    CLASS-METHODS:
+      fetch_bp_for_validation
+        RETURNING VALUE(rt_bp) TYPE zif_bp_validator_ap=>tt_bp,
+
+      ensure_min_proposals
+        IMPORTING it_issues   TYPE zif_bp_validator_ap=>tt_issue
+        CHANGING  ct_proposal TYPE zcl_bp_audit_proc_ap=>tt_proposal,
+
+      apply_updates
+        IMPORTING
+          it_bp   TYPE zif_bp_validator_ap=>tt_bp
+          it_prop TYPE zcl_bp_audit_proc_ap=>tt_proposal
+        RETURNING
+          VALUE(rt_upd) TYPE tt_upd_res,
+
+      update_single_bp
+        IMPORTING
+          iv_partner TYPE zbp_ap_bp-partner
+          it_prop_bp TYPE zcl_bp_audit_proc_ap=>tt_proposal
+        RETURNING
+          VALUE(rs_upd) TYPE ty_upd_res,
+
+      build_prop_index
+        IMPORTING it_prop TYPE zcl_bp_audit_proc_ap=>tt_proposal
+        RETURNING VALUE(rt_idx) TYPE tt_prop_key,
+
+      build_alv_final
+        IMPORTING
+          it_bp     TYPE zif_bp_validator_ap=>tt_bp
+          it_issues TYPE zif_bp_validator_ap=>tt_issue
+          it_prop   TYPE zcl_bp_audit_proc_ap=>tt_proposal
+          it_upd    TYPE tt_upd_res
+        RETURNING
+          VALUE(rt_alv) TYPE tt_alv,
+
+      display_final
+        IMPORTING it_alv TYPE tt_alv,
+
+      log_init,
+      log_add_line
+        IMPORTING
+          iv_partner TYPE zbp_ap_bp-partner
+          iv_field   TYPE string
+          iv_old     TYPE string
+          iv_new     TYPE string
+          iv_msgty   TYPE symsgty
+          iv_msg     TYPE string,
+      log_save.
+
+ENDCLASS.
+
+CLASS lcl_app IMPLEMENTATION.
+
+  METHOD run.
+    DATA lt_bp       TYPE zif_bp_validator_ap=>tt_bp.
+    DATA lt_issues   TYPE zif_bp_validator_ap=>tt_issue.
+    DATA lt_result   TYPE zcl_bp_audit_proc_ap=>tt_result.
+    DATA lt_proposal TYPE zcl_bp_audit_proc_ap=>tt_proposal.
+    DATA lt_upd      TYPE tt_upd_res.
+    DATA lt_alv      TYPE tt_alv.
+    DATA lo_proc     TYPE REF TO zcl_bp_audit_proc_ap.
+
+    log_init( ).
+
+    lt_bp = fetch_bp_for_validation( ).
+    IF lt_bp IS INITIAL.
+      MESSAGE 'Sin datos en ZBP_AP_BP para los filtros' TYPE 'S'.
+      RETURN.
+    ENDIF.
+
+    CREATE OBJECT lo_proc.
+
+    lo_proc->process(
+      EXPORTING
+        it_bp       = lt_bp
+      IMPORTING
+        rt_issues   = lt_issues
+        rt_result   = lt_result
+        rt_proposal = lt_proposal ).
+
+    ensure_min_proposals(
+      EXPORTING it_issues   = lt_issues
+      CHANGING  ct_proposal = lt_proposal ).
+
+    lt_upd = apply_updates(
+      it_bp   = lt_bp
+      it_prop = lt_proposal ).
+
+    lt_alv = build_alv_final(
+      it_bp     = lt_bp
+      it_issues = lt_issues
+      it_prop   = lt_proposal
+      it_upd    = lt_upd ).
+
+    IF p_onlye = abap_true.
+      DELETE lt_alv WHERE estado <> 'E'.
+    ENDIF.
+
+    log_save( ).
+
+    IF lt_alv IS INITIAL.
+      MESSAGE 'Sin issues para mostrar (o filtrado dejó vacío)' TYPE 'S'.
+      RETURN.
+    ENDIF.
+
+    display_final( lt_alv ).
+  ENDMETHOD.
+
+  METHOD fetch_bp_for_validation.
+  SELECT partner,
+         partner_type,
+         nit,
+         dpi,
+         email,
+         phone
+    FROM zbp_ap_bp
+    WHERE partner IN @s_partnr
+      AND ( @p_ptype = 'A' OR partner_type = @p_ptype )
+    INTO TABLE @rt_bp.
+ENDMETHOD.
+
+  METHOD ensure_min_proposals.
+    DATA ls_issue TYPE LINE OF zif_bp_validator_ap=>tt_issue.
+    DATA ls_p     TYPE LINE OF zcl_bp_audit_proc_ap=>tt_proposal.
+    DATA lv_field TYPE string.
+    DATA lv_found TYPE abap_bool.
+
+    LOOP AT it_issues INTO ls_issue.
+      lv_field = ls_issue-field_name.
+      CONDENSE lv_field NO-GAPS.
+      TRANSLATE lv_field TO UPPER CASE.
+
+      IF ls_issue-severity = 'E'
+         AND ( lv_field = 'EMAIL' OR lv_field = 'PHONE' ).
+
+        lv_found = abap_false.
+
+        LOOP AT ct_proposal INTO ls_p
+          WHERE partner = ls_issue-partner
+            AND field_name = lv_field.
+          lv_found = abap_true.
+          EXIT.
+        ENDLOOP.
+
+        IF lv_found = abap_false.
+          CLEAR ls_p.
+          ls_p-partner    = ls_issue-partner.
+          ls_p-field_name = lv_field.
+          ls_p-old_value  = ls_issue-found_value.
+          ls_p-new_value  = ''.
+          ls_p-reason     = 'Issue sin propuesta'.
+          APPEND ls_p TO ct_proposal.
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD apply_updates.
+    DATA ls_bp_in   TYPE LINE OF zif_bp_validator_ap=>tt_bp.
+    DATA ls_prop    TYPE LINE OF zcl_bp_audit_proc_ap=>tt_proposal.
+    DATA lt_prop_bp TYPE zcl_bp_audit_proc_ap=>tt_proposal.
+    DATA ls_upd     TYPE ty_upd_res.
+
+    CLEAR rt_upd.
+
+    LOOP AT it_bp INTO ls_bp_in.
+      CLEAR lt_prop_bp.
+
+      LOOP AT it_prop INTO ls_prop WHERE partner = ls_bp_in-partner.
+        APPEND ls_prop TO lt_prop_bp.
+      ENDLOOP.
+
+      IF p_sim = abap_true.
+        CLEAR ls_upd.
+        ls_upd-partner = ls_bp_in-partner.
+        ls_upd-ok      = abap_true.
+        ls_upd-msgty   = 'S'.
+        ls_upd-message = 'Simulación: no se actualizó'.
+      ELSE.
+        ls_upd = update_single_bp(
+          iv_partner = ls_bp_in-partner
+          it_prop_bp = lt_prop_bp ).
+        ls_upd-partner = ls_bp_in-partner.
+      ENDIF.
+
+      INSERT ls_upd INTO TABLE rt_upd.
+
+      IF lt_prop_bp IS INITIAL.
+        log_add_line(
+          iv_partner = ls_bp_in-partner
+          iv_field   = 'N/A'
+          iv_old     = ''
+          iv_new     = ''
+          iv_msgty   = ls_upd-msgty
+          iv_msg     = ls_upd-message ).
+      ELSE.
+        LOOP AT lt_prop_bp INTO ls_prop.
+          log_add_line(
+            iv_partner = ls_bp_in-partner
+            iv_field   = ls_prop-field_name
+            iv_old     = ls_prop-old_value
+            iv_new     = ls_prop-new_value
+            iv_msgty   = ls_upd-msgty
+            iv_msg     = ls_upd-message ).
+        ENDLOOP.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD update_single_bp.
+    DATA ls_db    TYPE zbp_ap_bp.
+    DATA lv_email TYPE zbp_ap_bp-email.
+    DATA lv_phone TYPE zbp_ap_bp-phone.
+
+    DATA ls_prop2 TYPE LINE OF zcl_bp_audit_proc_ap=>tt_proposal.
+    DATA lv_field TYPE string.
+    DATA lv_err   TYPE abap_bool.
+    DATA lv_any   TYPE abap_bool.
+
+    CLEAR rs_upd.
+    rs_upd-partner = iv_partner.
+    rs_upd-ok      = abap_true.
+    rs_upd-msgty   = 'S'.
+    rs_upd-message = 'Sin cambios'.
+
+    IF it_prop_bp IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    SELECT SINGLE partner, email, phone, nit, dpi
+      FROM zbp_ap_bp
+      WHERE partner = @iv_partner
+      INTO @ls_db.
+
+    IF sy-subrc <> 0.
+      rs_upd-ok      = abap_false.
+      rs_upd-msgty   = 'E'.
+      rs_upd-message = 'BP no existe en ZBP_AP_BP. No se puede actualizar.'.
+      CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+      RETURN.
+    ENDIF.
+
+    lv_email = ls_db-email.
+    lv_phone = ls_db-phone.
+
+    LOOP AT it_prop_bp INTO ls_prop2.
+      IF ls_prop2-new_value IS INITIAL.
+        CONTINUE.
+      ENDIF.
+
+      lv_field = ls_prop2-field_name.
+      CONDENSE lv_field NO-GAPS.
+      TRANSLATE lv_field TO UPPER CASE.
+
+      CASE lv_field.
+        WHEN 'EMAIL'.
+          lv_email = CONV zbp_ap_bp-email( ls_prop2-new_value ).
+        WHEN 'PHONE'.
+          lv_phone = CONV zbp_ap_bp-phone( ls_prop2-new_value ).
+      ENDCASE.
+    ENDLOOP.
+
+    lv_err = abap_false.
+    lv_any = abap_false.
+
+    IF lv_email <> ls_db-email.
+      UPDATE zbp_ap_bp SET email = @lv_email WHERE partner = @iv_partner.
+      lv_any = abap_true.
+      IF sy-subrc <> 0 OR sy-dbcnt = 0.
+        lv_err = abap_true.
+      ENDIF.
+    ENDIF.
+
+    IF lv_phone <> ls_db-phone.
+      UPDATE zbp_ap_bp SET phone = @lv_phone WHERE partner = @iv_partner.
+      lv_any = abap_true.
+      IF sy-subrc <> 0 OR sy-dbcnt = 0.
+        lv_err = abap_true.
+      ENDIF.
+    ENDIF.
+
+    IF lv_any = abap_false.
+      rs_upd-ok      = abap_true.
+      rs_upd-msgty   = 'S'.
+      rs_upd-message = 'Sin cambios aplicables (EMAIL/PHONE)'.
+      RETURN.
+    ENDIF.
+
+    IF lv_err = abap_true.
+      CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+      rs_upd-ok      = abap_false.
+      rs_upd-msgty   = 'E'.
+      rs_upd-message = 'Error al actualizar ZBP_AP_BP (0 filas afectadas). ROLLBACK ejecutado.'.
+      RETURN.
+    ENDIF.
+
+    COMMIT WORK AND WAIT.
+
+    rs_upd-ok      = abap_true.
+    rs_upd-msgty   = 'S'.
+    rs_upd-message = 'Actualización aplicada en ZBP_AP_BP + COMMIT'.
+  ENDMETHOD.
+
+  METHOD build_prop_index.
+    DATA ls_prop3 TYPE LINE OF zcl_bp_audit_proc_ap=>tt_proposal.
+
+    CLEAR rt_idx.
+
+    LOOP AT it_prop INTO ls_prop3.
+      IF ls_prop3-new_value IS INITIAL.
+        CONTINUE.
+      ENDIF.
+
+      DATA(lv_field) = ls_prop3-field_name.
+      CONDENSE lv_field NO-GAPS.
+      TRANSLATE lv_field TO UPPER CASE.
+
+      READ TABLE rt_idx ASSIGNING FIELD-SYMBOL(<ls_idx>)
+        WITH TABLE KEY partner = ls_prop3-partner field_name = lv_field.
+
+      IF <ls_idx> IS ASSIGNED.
+        <ls_idx>-new_value = ls_prop3-new_value.
+      ELSE.
+        INSERT VALUE ty_prop_key(
+          partner    = ls_prop3-partner
+          field_name = lv_field
+          new_value  = ls_prop3-new_value ) INTO TABLE rt_idx.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD build_alv_final.
+    DATA lt_idx     TYPE tt_prop_key.
+    DATA ls_issue   TYPE LINE OF zif_bp_validator_ap=>tt_issue.
+    DATA ls_bp_row  TYPE LINE OF zif_bp_validator_ap=>tt_bp.
+    DATA ls_upd     TYPE ty_upd_res.
+    DATA lv_new     TYPE string.
+    DATA lv_tipo    TYPE c LENGTH 1.
+    DATA lv_icon    TYPE icon_d.
+
+    lt_idx = build_prop_index( it_prop ).
+
+    LOOP AT it_issues INTO ls_issue.
+      CLEAR lv_new.
+
+      DATA(lv_field) = ls_issue-field_name.
+      CONDENSE lv_field NO-GAPS.
+      TRANSLATE lv_field TO UPPER CASE.
+
+      READ TABLE lt_idx ASSIGNING FIELD-SYMBOL(<ls_p>)
+        WITH TABLE KEY partner = ls_issue-partner field_name = lv_field.
+      IF <ls_p> IS ASSIGNED.
+        lv_new = <ls_p>-new_value.
+      ENDIF.
+
+      IF ls_issue-severity = 'E'.
+        lv_icon = icon_led_red.
+      ELSEIF ls_issue-severity = 'W'.
+        lv_icon = icon_led_yellow.
+      ELSE.
+        lv_icon = icon_led_green.
+      ENDIF.
+
+      CLEAR lv_tipo.
+      READ TABLE it_bp INTO ls_bp_row WITH KEY partner = ls_issue-partner.
+      IF sy-subrc = 0.
+        lv_tipo = ls_bp_row-partner_type.
+      ENDIF.
+
+      CLEAR ls_upd.
+      READ TABLE it_upd INTO ls_upd WITH TABLE KEY partner = ls_issue-partner.
+
+      APPEND VALUE ty_alv(
+        bp              = ls_issue-partner
+        tipo            = lv_tipo
+        campo           = lv_field
+        valor_actual    = ls_issue-found_value
+        valor_corregido = lv_new
+        estado          = ls_issue-severity
+        estado_icon     = lv_icon
+        mensaje         = ls_issue-message
+        upd_ok          = ls_upd-ok
+        upd_msgty       = ls_upd-msgty
+        upd_msg         = ls_upd-message ) TO rt_alv.
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD display_final.
+    DATA lt_alv TYPE tt_alv.
+    DATA lo_alv   TYPE REF TO cl_salv_table.
+    DATA lo_cols  TYPE REF TO cl_salv_columns_table.
+    DATA lo_disp  TYPE REF TO cl_salv_display_settings.
+    DATA lo_funcs TYPE REF TO cl_salv_functions_list.
+
+    lt_alv = it_alv.
+
+    TRY.
+        cl_salv_table=>factory(
+          IMPORTING
+            r_salv_table = lo_alv
+          CHANGING
+            t_table      = lt_alv ).
+
+        lo_disp = lo_alv->get_display_settings( ).
+        lo_disp->set_striped_pattern( abap_true ).
+        lo_disp->set_list_header( 'BP Audit (ZBP_AP_BP) - Issues/Propuestas/Update' ).
+
+        lo_funcs = lo_alv->get_functions( ).
+        lo_funcs->set_all( abap_true ).
+
+        lo_cols = lo_alv->get_columns( ).
+        lo_cols->set_optimize( abap_true ).
+
+        TRY. lo_cols->get_column( 'BP' )->set_short_text( 'BP' ). CATCH cx_salv_not_found. ENDTRY.
+        TRY. lo_cols->get_column( 'TIPO' )->set_short_text( 'Tipo' ). CATCH cx_salv_not_found. ENDTRY.
+        TRY. lo_cols->get_column( 'CAMPO' )->set_short_text( 'Campo' ). CATCH cx_salv_not_found. ENDTRY.
+        TRY. lo_cols->get_column( 'VALOR_ACTUAL' )->set_short_text( 'Actual' ). CATCH cx_salv_not_found. ENDTRY.
+        TRY. lo_cols->get_column( 'VALOR_CORREGIDO' )->set_short_text( 'Corregido' ). CATCH cx_salv_not_found. ENDTRY.
+        TRY. lo_cols->get_column( 'ESTADO_ICON' )->set_short_text( 'Estado' ). CATCH cx_salv_not_found. ENDTRY.
+        TRY. lo_cols->get_column( 'MENSAJE' )->set_short_text( 'Mensaje' ). CATCH cx_salv_not_found. ENDTRY.
+        TRY. lo_cols->get_column( 'UPD_OK' )->set_short_text( 'Upd' ). CATCH cx_salv_not_found. ENDTRY.
+        TRY. lo_cols->get_column( 'UPD_MSGTY' )->set_short_text( 'T' ). CATCH cx_salv_not_found. ENDTRY.
+        TRY. lo_cols->get_column( 'UPD_MSG' )->set_short_text( 'Resultado' ). CATCH cx_salv_not_found. ENDTRY.
+
+        lo_alv->display( ).
+
+      CATCH cx_salv_msg INTO DATA(lx_salv).
+        MESSAGE lx_salv->get_text( ) TYPE 'E'.
+    ENDTRY.
+  ENDMETHOD.
+
+  METHOD log_init.
+    GET TIME STAMP FIELD gv_run_ts.
+    gv_seq = 0.
+    CLEAR gt_log.
+  ENDMETHOD.
+
+  METHOD log_add_line.
+    DATA ls_log     TYPE zbp_ap_audlog.
+    DATA lv_guid_32 TYPE guid_32.
+
+    gv_seq += 1.
+
+    CALL FUNCTION 'GUID_CREATE'
+      IMPORTING ev_guid_32 = lv_guid_32.
+
+    CLEAR ls_log.
+    ls_log-mandt      = sy-mandt.
+    ls_log-run_ts     = gv_run_ts.
+    ls_log-uname      = sy-uname.
+    ls_log-is_sim     = COND #( WHEN p_sim = abap_true THEN 'X' ELSE space ).
+    ls_log-partner    = iv_partner.
+    ls_log-field_name = CONV zbp_ap_audlog-field_name( iv_field ).
+    ls_log-old_value  = CONV zbp_ap_audlog-old_value( iv_old ).
+    ls_log-new_value  = CONV zbp_ap_audlog-new_value( iv_new ).
+    ls_log-msgty      = iv_msgty.
+    ls_log-message    = CONV zbp_ap_audlog-message( iv_msg ).
+    ls_log-log_id     = lv_guid_32.
+
+    APPEND ls_log TO gt_log.
+  ENDMETHOD.
+
+  METHOD log_save.
+    IF gt_log IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    INSERT zbp_ap_audlog FROM TABLE @gt_log ACCEPTING DUPLICATE KEYS.
+    COMMIT WORK AND WAIT.
+  ENDMETHOD.
+
+ENDCLASS.
+
+START-OF-SELECTION.
+  lcl_app=>run( ).
+
+
+
+
+
+CLASS zcl_bp_val_nit_ap_test DEFINITION
+  PUBLIC
+  FINAL
+  FOR TESTING
+  DURATION SHORT
+  RISK LEVEL HARMLESS.
+
+  PRIVATE SECTION.
+    DATA mo_cut TYPE REF TO zif_bp_validator_ap.
+
+    METHODS setup.
+
+    METHODS build_bp
+      IMPORTING iv_partner      TYPE string
+                iv_partner_type TYPE zif_bp_validator_ap=>ty_bp-partner_type
+                iv_nit          TYPE string
+      RETURNING VALUE(rs_bp)    TYPE zif_bp_validator_ap=>ty_bp.
+
+    METHODS assert_has_issue
+      IMPORTING it_issues   TYPE zif_bp_validator_ap=>tt_issue
+                iv_partner  TYPE string
+                iv_field    TYPE string
+                iv_severity TYPE zif_bp_validator_ap=>ty_issue-severity.
+
+    METHODS t_org_nit_initial FOR TESTING.
+    METHODS t_org_nit_invalid FOR TESTING.
+    METHODS t_org_nit_ok8     FOR TESTING.
+    METHODS t_org_nit_ok9     FOR TESTING.
+    METHODS t_ignore_person   FOR TESTING.
+ENDCLASS.
+
+CLASS zcl_bp_val_nit_ap_test IMPLEMENTATION.
+
+  METHOD setup.
+    mo_cut = NEW zcl_bp_val_nit_ap( ).
+  ENDMETHOD.
+
+  METHOD build_bp.
+    CLEAR rs_bp.
+    rs_bp-partner      = iv_partner.
+    rs_bp-partner_type = iv_partner_type.
+    rs_bp-nit          = iv_nit.
+    rs_bp-dpi          = ''.
+    rs_bp-email        = ''.
+    rs_bp-phone        = ''.
+  ENDMETHOD.
+
+  METHOD assert_has_issue.
+    READ TABLE it_issues TRANSPORTING NO FIELDS
+      WITH KEY partner    = iv_partner
+               field_name = iv_field
+               severity   = iv_severity.
+    cl_abap_unit_assert=>assert_equals(
+      act = sy-subrc
+      exp = 0
+      msg = |Se esperaba issue { iv_severity } en { iv_field } para { iv_partner }| ).
+  ENDMETHOD.
+
+  METHOD t_org_nit_initial .
+    DATA lt_bp TYPE zif_bp_validator_ap=>tt_bp.
+    APPEND build_bp( iv_partner = 'BP00000001' iv_partner_type = 'O' iv_nit = '' ) TO lt_bp.
+
+    DATA lt_issues TYPE zif_bp_validator_ap=>tt_issue.
+    lt_issues = mo_cut->validate( lt_bp ).
+
+    assert_has_issue(
+      it_issues   = lt_issues
+      iv_partner  = 'BP00000001'
+      iv_field    = 'NIT'
+      iv_severity = 'E' ).
+  ENDMETHOD.
+
+  METHOD t_org_nit_invalid .
+    DATA lt_bp TYPE zif_bp_validator_ap=>tt_bp.
+    APPEND build_bp( iv_partner = 'BP00000002' iv_partner_type = 'O' iv_nit = '1234A678-9' ) TO lt_bp.
+
+    DATA lt_issues TYPE zif_bp_validator_ap=>tt_issue.
+    lt_issues = mo_cut->validate( lt_bp ).
+
+    assert_has_issue(
+      it_issues   = lt_issues
+      iv_partner  = 'BP00000002'
+      iv_field    = 'NIT'
+      iv_severity = 'E' ).
+  ENDMETHOD.
+
+  METHOD t_org_nit_ok8     .
+    DATA lt_bp TYPE zif_bp_validator_ap=>tt_bp.
+    APPEND build_bp( iv_partner = 'BP00000003' iv_partner_type = 'O' iv_nit = '12345678-9' ) TO lt_bp.
+
+    DATA lt_issues TYPE zif_bp_validator_ap=>tt_issue.
+    lt_issues = mo_cut->validate( lt_bp ).
+
+    cl_abap_unit_assert=>assert_equals(
+      act = lines( lt_issues )
+      exp = 0
+      msg = 'No deberían existir issues para NIT válido (8 dígitos)' ).
+  ENDMETHOD.
+
+  METHOD t_org_nit_ok9     .
+    DATA lt_bp TYPE zif_bp_validator_ap=>tt_bp.
+    APPEND build_bp( iv_partner = 'BP00000004' iv_partner_type = 'O' iv_nit = '123456789-1' ) TO lt_bp.
+
+    DATA lt_issues TYPE zif_bp_validator_ap=>tt_issue.
+    lt_issues = mo_cut->validate( lt_bp ).
+
+    cl_abap_unit_assert=>assert_equals(
+      act = lines( lt_issues )
+      exp = 0
+      msg = 'No deberían existir issues para NIT válido (9 dígitos)' ).
+  ENDMETHOD.
+
+  METHOD t_ignore_person   .
+    DATA lt_bp TYPE zif_bp_validator_ap=>tt_bp.
+    APPEND build_bp( iv_partner = 'BP00000005' iv_partner_type = 'P' iv_nit = '' ) TO lt_bp.
+
+    DATA lt_issues TYPE zif_bp_validator_ap=>tt_issue.
+    lt_issues = mo_cut->validate( lt_bp ).
+
+    cl_abap_unit_assert=>assert_equals(
+      act = lines( lt_issues )
+      exp = 0
+      msg = 'Para partner_type=P, el validador de NIT debe ignorar' ).
+  ENDMETHOD.
+
+ENDCLASS.
+
+
+
+
+CLASS zcl_bp_val_dpi_ap_test DEFINITION
+  PUBLIC
+  FINAL
+  FOR TESTING
+  DURATION SHORT
+  RISK LEVEL HARMLESS.
+
+  PRIVATE SECTION.
+    DATA mo_cut TYPE REF TO zif_bp_validator_ap.
+
+    METHODS setup.
+
+    METHODS build_bp
+      IMPORTING iv_partner      TYPE string
+                iv_partner_type TYPE zif_bp_validator_ap=>ty_bp-partner_type
+                iv_dpi          TYPE string
+      RETURNING VALUE(rs_bp)    TYPE zif_bp_validator_ap=>ty_bp.
+
+    METHODS assert_has_issue
+      IMPORTING it_issues   TYPE zif_bp_validator_ap=>tt_issue
+                iv_partner  TYPE string
+                iv_field    TYPE string
+                iv_severity TYPE zif_bp_validator_ap=>ty_issue-severity.
+
+    METHODS assert_no_issues
+      IMPORTING it_issues TYPE zif_bp_validator_ap=>tt_issue
+                iv_msg    TYPE string.
+
+    METHODS t_p_dpi_initial FOR TESTING.
+    METHODS t_p_dpi_invalid FOR TESTING.
+    METHODS t_p_dpi_ok       FOR TESTING.
+    METHODS t_ignore_org     FOR TESTING.
+ENDCLASS.
+
+CLASS zcl_bp_val_dpi_ap_test IMPLEMENTATION.
+
+  METHOD setup.
+    mo_cut = NEW zcl_bp_val_dpi_ap( ).
+  ENDMETHOD.
+
+  METHOD build_bp.
+    CLEAR rs_bp.
+    rs_bp-partner      = iv_partner.
+    rs_bp-partner_type = iv_partner_type.
+    rs_bp-nit          = ''.
+    rs_bp-dpi          = iv_dpi.
+    rs_bp-email        = ''.
+    rs_bp-phone        = ''.
+  ENDMETHOD.
+
+  METHOD assert_has_issue.
+    READ TABLE it_issues TRANSPORTING NO FIELDS
+      WITH KEY partner    = iv_partner
+               field_name = iv_field
+               severity   = iv_severity.
+    cl_abap_unit_assert=>assert_equals(
+      act = sy-subrc
+      exp = 0
+      msg = |Se esperaba issue { iv_severity } en { iv_field } para { iv_partner }| ).
+  ENDMETHOD.
+
+  METHOD assert_no_issues.
+    cl_abap_unit_assert=>assert_equals(
+      act = lines( it_issues )
+      exp = 0
+      msg = iv_msg ).
+  ENDMETHOD.
+
+  METHOD t_p_dpi_initial.
+    DATA lt_bp TYPE zif_bp_validator_ap=>tt_bp.
+    APPEND build_bp(
+      iv_partner      = 'BP00000001'
+      iv_partner_type = 'P'
+      iv_dpi          = '' ) TO lt_bp.
+
+    DATA lt_issues TYPE zif_bp_validator_ap=>tt_issue.
+    lt_issues = mo_cut->validate( lt_bp ).
+
+    assert_has_issue(
+      it_issues   = lt_issues
+      iv_partner  = 'BP00000001'
+      iv_field    = 'DPI'
+      iv_severity = 'E' ).
+  ENDMETHOD.
+
+  METHOD t_p_dpi_invalid.
+    DATA lt_bp TYPE zif_bp_validator_ap=>tt_bp.
+
+    " letras
+    APPEND build_bp(
+      iv_partner      = 'BP00000002'
+      iv_partner_type = 'P'
+      iv_dpi          = '12345A7890123' ) TO lt_bp.
+
+    " longitud distinta a 13
+    APPEND build_bp(
+      iv_partner      = 'BP00000003'
+      iv_partner_type = 'P'
+      iv_dpi          = '123456789012' ) TO lt_bp.
+
+    DATA lt_issues TYPE zif_bp_validator_ap=>tt_issue.
+    lt_issues = mo_cut->validate( lt_bp ).
+
+    assert_has_issue(
+      it_issues   = lt_issues
+      iv_partner  = 'BP00000002'
+      iv_field    = 'DPI'
+      iv_severity = 'E' ).
+
+    assert_has_issue(
+      it_issues   = lt_issues
+      iv_partner  = 'BP00000003'
+      iv_field    = 'DPI'
+      iv_severity = 'E' ).
+  ENDMETHOD.
+
+  METHOD t_p_dpi_ok.
+    DATA lt_bp TYPE zif_bp_validator_ap=>tt_bp.
+    APPEND build_bp(
+      iv_partner      = 'BP00000004'
+      iv_partner_type = 'P'
+      iv_dpi          = '1234567890123' ) TO lt_bp.
+
+    DATA lt_issues TYPE zif_bp_validator_ap=>tt_issue.
+    lt_issues = mo_cut->validate( lt_bp ).
+
+    assert_no_issues(
+      it_issues = lt_issues
+      iv_msg    = 'No deberían existir issues para DPI válido (13 dígitos)' ).
+  ENDMETHOD.
+
+  METHOD t_ignore_org.
+    DATA lt_bp TYPE zif_bp_validator_ap=>tt_bp.
+    APPEND build_bp(
+      iv_partner      = 'BP00000005'
+      iv_partner_type = 'O'
+      iv_dpi          = '' ) TO lt_bp.
+
+    DATA lt_issues TYPE zif_bp_validator_ap=>tt_issue.
+    lt_issues = mo_cut->validate( lt_bp ).
+
+    assert_no_issues(
+      it_issues = lt_issues
+      iv_msg    = 'Para partner_type=O, el validador de DPI debe ignorar' ).
+  ENDMETHOD.
+
+ENDCLASS.
+
+
+
+
+
+
+
+
+
+
+
+CLASS zcl_bp_val_contact_ap_test DEFINITION
+  PUBLIC
+  FINAL
+  FOR TESTING
+  DURATION SHORT
+  RISK LEVEL HARMLESS.
+
+  PRIVATE SECTION.
+    DATA mo_cut TYPE REF TO zif_bp_validator_ap.
+
+    METHODS setup.
+
+    METHODS build_bp
+      IMPORTING iv_partner      TYPE string
+                iv_partner_type TYPE zif_bp_validator_ap=>ty_bp-partner_type
+                iv_email        TYPE string
+                iv_phone        TYPE string
+      RETURNING VALUE(rs_bp)    TYPE zif_bp_validator_ap=>ty_bp.
+
+    METHODS assert_has_issue
+      IMPORTING it_issues   TYPE zif_bp_validator_ap=>tt_issue
+                iv_partner  TYPE string
+                iv_field    TYPE string
+                iv_severity TYPE zif_bp_validator_ap=>ty_issue-severity.
+
+    METHODS assert_not_has_issue
+      IMPORTING it_issues   TYPE zif_bp_validator_ap=>tt_issue
+                iv_partner  TYPE string
+                iv_field    TYPE string
+                iv_severity TYPE zif_bp_validator_ap=>ty_issue-severity.
+
+    METHODS t_email_empty_warn  FOR TESTING.
+    METHODS t_email_invalid_err FOR TESTING.
+    METHODS t_email_ok_no_issue FOR TESTING.
+
+    METHODS t_phone_empty_warn  FOR TESTING.
+    METHODS t_phone_invalid_err FOR TESTING.
+    METHODS t_phone_ok_no_issue FOR TESTING.
+
+    METHODS t_both_ok_no_issue  FOR TESTING.
+ENDCLASS.
+
+CLASS zcl_bp_val_contact_ap_test IMPLEMENTATION.
+
+  METHOD setup.
+    mo_cut = NEW zcl_bp_val_contact_ap( ).
+  ENDMETHOD.
+
+  METHOD build_bp.
+    CLEAR rs_bp.
+    rs_bp-partner      = iv_partner.
+    rs_bp-partner_type = iv_partner_type.
+    rs_bp-nit          = ''.
+    rs_bp-dpi          = ''.
+    rs_bp-email        = iv_email.
+    rs_bp-phone        = iv_phone.
+  ENDMETHOD.
+
+  METHOD assert_has_issue.
+    READ TABLE it_issues TRANSPORTING NO FIELDS
+      WITH KEY partner    = iv_partner
+               field_name = iv_field
+               severity   = iv_severity.
+    cl_abap_unit_assert=>assert_equals(
+      act = sy-subrc
+      exp = 0
+      msg = |Se esperaba issue { iv_severity } en { iv_field } para { iv_partner }| ).
+  ENDMETHOD.
+
+  METHOD assert_not_has_issue.
+    READ TABLE it_issues TRANSPORTING NO FIELDS
+      WITH KEY partner    = iv_partner
+               field_name = iv_field
+               severity   = iv_severity.
+    cl_abap_unit_assert=>assert_equals(
+      act = sy-subrc
+      exp = 4
+      msg = |No se esperaba issue { iv_severity } en { iv_field } para { iv_partner }| ).
+  ENDMETHOD.
+
+  METHOD t_email_empty_warn.
+    DATA lt_bp TYPE zif_bp_validator_ap=>tt_bp.
+    APPEND build_bp(
+      iv_partner      = 'BP00000001'
+      iv_partner_type = 'P'
+      iv_email        = ''
+      iv_phone        = '+50212345678' ) TO lt_bp.
+
+    DATA lt_issues TYPE zif_bp_validator_ap=>tt_issue.
+    lt_issues = mo_cut->validate( lt_bp ).
+
+    assert_has_issue(
+      it_issues   = lt_issues
+      iv_partner  = 'BP00000001'
+      iv_field    = 'EMAIL'
+      iv_severity = 'W' ).
+
+    assert_not_has_issue(
+      it_issues   = lt_issues
+      iv_partner  = 'BP00000001'
+      iv_field    = 'EMAIL'
+      iv_severity = 'E' ).
+  ENDMETHOD.
+
+  METHOD t_email_invalid_err.
+    DATA lt_bp TYPE zif_bp_validator_ap=>tt_bp.
+    APPEND build_bp(
+      iv_partner      = 'BP00000002'
+      iv_partner_type = 'O'
+      iv_email        = 'INVALIDO-EMAIL'
+      iv_phone        = '+50212345678' ) TO lt_bp.
+
+    DATA lt_issues TYPE zif_bp_validator_ap=>tt_issue.
+    lt_issues = mo_cut->validate( lt_bp ).
+
+    assert_has_issue(
+      it_issues   = lt_issues
+      iv_partner  = 'BP00000002'
+      iv_field    = 'EMAIL'
+      iv_severity = 'E' ).
+  ENDMETHOD.
+
+  METHOD t_email_ok_no_issue.
+    DATA lt_bp TYPE zif_bp_validator_ap=>tt_bp.
+    APPEND build_bp(
+      iv_partner      = 'BP00000003'
+      iv_partner_type = 'P'
+      iv_email        = 'JUAN.PEREZ01@TESTDEMO.COM'
+      iv_phone        = '+50212345678' ) TO lt_bp.
+
+    DATA lt_issues TYPE zif_bp_validator_ap=>tt_issue.
+    lt_issues = mo_cut->validate( lt_bp ).
+
+    cl_abap_unit_assert=>assert_equals(
+      act = lines( lt_issues )
+      exp = 0
+      msg = 'No deberían existir issues para EMAIL/PHONE válidos' ).
+  ENDMETHOD.
+
+  METHOD t_phone_empty_warn.
+    DATA lt_bp TYPE zif_bp_validator_ap=>tt_bp.
+    APPEND build_bp(
+      iv_partner      = 'BP00000004'
+      iv_partner_type = 'O'
+      iv_email        = 'EMPRESA@TESTDEMO.COM'
+      iv_phone        = '' ) TO lt_bp.
+
+    DATA lt_issues TYPE zif_bp_validator_ap=>tt_issue.
+    lt_issues = mo_cut->validate( lt_bp ).
+
+    assert_has_issue(
+      it_issues   = lt_issues
+      iv_partner  = 'BP00000004'
+      iv_field    = 'PHONE'
+      iv_severity = 'W' ).
+
+    assert_not_has_issue(
+      it_issues   = lt_issues
+      iv_partner  = 'BP00000004'
+      iv_field    = 'PHONE'
+      iv_severity = 'E' ).
+  ENDMETHOD.
+
+  METHOD t_phone_invalid_err.
+    DATA lt_bp TYPE zif_bp_validator_ap=>tt_bp.
+    APPEND build_bp(
+      iv_partner      = 'BP00000005'
+      iv_partner_type = 'P'
+      iv_email        = 'OK@TESTDEMO.COM'
+      iv_phone        = '12345678' ) TO lt_bp.
+
+    DATA lt_issues TYPE zif_bp_validator_ap=>tt_issue.
+    lt_issues = mo_cut->validate( lt_bp ).
+
+    assert_has_issue(
+      it_issues   = lt_issues
+      iv_partner  = 'BP00000005'
+      iv_field    = 'PHONE'
+      iv_severity = 'E' ).
+  ENDMETHOD.
+
+  METHOD t_phone_ok_no_issue.
+    DATA lt_bp TYPE zif_bp_validator_ap=>tt_bp.
+    APPEND build_bp(
+      iv_partner      = 'BP00000006'
+      iv_partner_type = 'P'
+      iv_email        = 'OK@TESTDEMO.COM'
+      iv_phone        = '+50287654321' ) TO lt_bp.
+
+    DATA lt_issues TYPE zif_bp_validator_ap=>tt_issue.
+    lt_issues = mo_cut->validate( lt_bp ).
+
+    cl_abap_unit_assert=>assert_equals(
+      act = lines( lt_issues )
+      exp = 0
+      msg = 'No deberían existir issues para PHONE válido (+502########) y EMAIL válido' ).
+  ENDMETHOD.
+
+  METHOD t_both_ok_no_issue.
+    DATA lt_bp TYPE zif_bp_validator_ap=>tt_bp.
+    APPEND build_bp(
+      iv_partner      = 'BP00000007'
+      iv_partner_type = 'O'
+      iv_email        = 'BETA.CORP@TESTDEMO.COM'
+      iv_phone        = '+50211223344' ) TO lt_bp.
+
+    DATA lt_issues TYPE zif_bp_validator_ap=>tt_issue.
+    lt_issues = mo_cut->validate( lt_bp ).
+
+    cl_abap_unit_assert=>assert_equals(
+      act = lines( lt_issues )
+      exp = 0
+      msg = 'No deberían existir issues cuando EMAIL y PHONE son válidos' ).
+  ENDMETHOD.
+
+ENDCLASS.
+
+
+
+
+
+
+
+
